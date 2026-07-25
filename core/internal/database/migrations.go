@@ -520,6 +520,18 @@ var migrations = []Migration{
 			DELETE FROM settings WHERE key = 'geoip';
 		`,
 	},
+	{
+		Version:     23,
+		Description: "Add allow_working_proxies_export to proxy_users table",
+		Up: `
+			ALTER TABLE proxy_users
+				ADD COLUMN IF NOT EXISTS allow_working_proxies_export BOOLEAN NOT NULL DEFAULT false;
+		`,
+		Down: `
+			ALTER TABLE proxy_users
+				DROP COLUMN IF EXISTS allow_working_proxies_export;
+		`,
+	},
 }
 
 // Migrate runs all pending migrations

@@ -251,6 +251,10 @@ func (s *Server) setupRoutes() {
 	s.router.Get("/docs", s.documentationHandler.ServeDocumentation)
 	s.router.Get("/api/v1/swagger.json", s.serveSwaggerJSON)
 
+	// Working Proxy Pool Export (public endpoint authenticated via URL query params)
+	s.router.Get("/api/v1/proxy-users/export-working-proxies", s.userHandler.ExportWorkingProxies)
+	s.router.Get("/api/v1/users/working-proxies", s.userHandler.ExportWorkingProxies)
+
 	// Auth: only login is public; everything else requires a valid JWT
 	// Auth rate limiter wraps the login handler — per-IP block + global lockout
 	s.router.With(s.authRL.Middleware()).Post("/api/v1/auth/login", s.authHandler.Login)

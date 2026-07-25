@@ -991,3 +991,96 @@ func (r *PoolRepository) GetDistinctTags(ctx context.Context) ([]string, error) 
 func (r *PoolRepository) ExportProxies(ctx context.Context, poolID int) ([]models.PoolProxy, error) {
 	return r.GetProxies(ctx, poolID)
 }
+
+// GetByName returns a single pool by name (case-insensitive)
+func (r *PoolRepository) GetByName(ctx context.Context, name string) (*models.ProxyPool, error) {
+	query := `
+		SELECT
+			` + poolColumns + `,
+			COUNT(ppm.proxy_id)                                              AS total,
+			COUNT(ppm.proxy_id) FILTER (WHERE p.status = 'active')          AS active,
+			COUNT(ppm.proxy_id) FILTER (WHERE p.status = 'failed')          AS failed
+		FROM proxy_pools pp
+		LEFT JOIN pool_proxies ppm ON ppm.pool_id = pp.id
+		LEFT JOIN proxies p ON p.id = ppm.proxy_id
+		WHERE LOWER(pp.name) = LOWER($1)
+		GROUP BY pp.id
+	`
+	var pool models.ProxyPool
+	err := r.db.Pool.QueryRow(ctx, query, strings.TrimSpace(name)).Scan(
+		&pool.ID, &pool.Name, &pool.Description,
+		&pool.CountryCode, &pool.RegionName, &pool.CityName,
+		&pool.RotationMethod, &pool.StickCount,
+		&pool.HealthCheckURL, &pool.HealthCheckCron, &pool.HealthCheckEnabled,
+		&pool.AutoSync, &pool.SyncMode, &pool.Enabled,
+		&pool.CreatedAt, &pool.UpdatedAt,
+		&pool.TotalProxies, &pool.ActiveProxies, &pool.FailedProxies,
+	)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pool by name: %w", err)
+	}
+	return &pool, nil
+}
+
+// GetWorkingProxies returns working proxies for a pool, filtered by status with optional limit
+func (r *PoolRepository) GetWorkingProxies(ctx context.Context, poolID int, limit int, statusFilter string) ([]models.PoolProxy, error) {
+	if statusFilter == "" {
+		statusFilter = "active"
+	}
+
+	query := `
+		SELECT
+			p.id, p.address, p.protocol, p.username, p.password, p.status,
+			p.country_code, p.country_name, p.region_name, p.city_name, p.isp,
+			p.requests, p.successful_requests, p.failed_requests,
+			p.avg_response_time, p.last_check, ppm.added_at
+		FROM pool_proxies ppm
+		JOIN proxies p ON p.id = ppm.proxy_id
+		WHERE ppm.pool_id = $1
+	`
+	args := []interface{}{poolID}
+
+	if statusFilter != "all" {
+		query += ` AND p.status = $2`
+		args = append(args, statusFilter)
+	}
+
+	query += ` ORDER BY p.avg_response_time ASC, p.address ASC`
+
+	if limit > 0 {
+		query += fmt.Sprintf(` LIMIT $%d`, len(args)+1)
+		args = append(args, limit)
+	}
+
+	rows, err := r.db.Pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get working pool proxies: %w", err)
+	}
+	defer rows.Close()
+
+	var proxies []models.PoolProxy
+	for rows.Next() {
+		var pp models.PoolProxy
+		var succReq, failReq int64
+		err := rows.Scan(
+			&pp.ProxyID, &pp.Address, &pp.Protocol, &pp.Username, &pp.Password, &pp.Status,
+			&pp.CountryCode, &pp.CountryName, &pp.RegionName, &pp.CityName, &pp.ISP,
+			&pp.Requests, &succReq, &failReq,
+			&pp.AvgResponseTime, &pp.LastCheck, &pp.AddedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan working pool proxy: %w", err)
+		}
+		if pp.Requests > 0 {
+			pp.SuccessRate = float64(succReq) / float64(pp.Requests) * 100
+		}
+		proxies = append(proxies, pp)
+	}
+	if proxies == nil {
+		proxies = []models.PoolProxy{}
+	}
+	return proxies, nil
+}

@@ -345,6 +345,7 @@ export interface ProxyUser {
   id: number
   username: string
   enabled: boolean
+  allow_working_proxies_export?: boolean
   main_pool_id?: number
   main_pool_name?: string
   fallback_pool_ids: number[]
@@ -358,6 +359,7 @@ export interface CreateProxyUserRequest {
   username: string
   password: string
   enabled: boolean
+  allow_working_proxies_export?: boolean
   main_pool_id?: number | null
   fallback_pool_ids: number[]
   max_retries: number
@@ -367,6 +369,7 @@ export interface CreateProxyUserRequest {
 export interface UpdateProxyUserRequest {
   password?: string
   enabled?: boolean
+  allow_working_proxies_export?: boolean
   main_pool_id?: number | null
   fallback_pool_ids?: number[]
   max_retries?: number

@@ -10,6 +10,7 @@ type Settings struct {
 	HealthCheck    HealthCheckSettings    `json:"healthcheck"`
 	LogRetention   LogRetentionSettings   `json:"log_retention"`
 	ProxyCleanup   ProxyCleanupSettings   `json:"proxy_cleanup"`
+	GeoIP          GeoIPSettings          `json:"geoip"`
 }
 
 // AuthenticationSettings represents proxy server authentication configuration
@@ -71,6 +72,17 @@ type ProxyCleanupSettings struct {
 	MaxFailedDays        int     `json:"max_failed_days"`        // Remove proxies failed for more than N days
 	MinSuccessRate       float64 `json:"min_success_rate"`       // Remove proxies with success rate below X% (0 = disabled)
 	CleanupIntervalHours int     `json:"cleanup_interval_hours"` // How often to run cleanup
+}
+
+// GeoIPSettings represents GeoIP geolocation configuration
+type GeoIPSettings struct {
+	Provider            string    `json:"provider"`              // "ip-api" or "maxmind"
+	MaxMindLicenseKey   string    `json:"maxmind_license_key"`   // MaxMind license key for auto-download
+	MaxMindDBPath       string    `json:"maxmind_db_path"`       // Path to local .mmdb file
+	MaxMindURL          string    `json:"maxmind_url"`           // Custom download URL (optional)
+	AutoUpdate          bool      `json:"auto_update"`           // Enable automatic DB update on interval
+	UpdateIntervalHours int       `json:"update_interval_hours"` // How often to update in hours (default 168 = 7 days)
+	LastUpdatedAt       time.Time `json:"last_updated_at"`       // Timestamp of last successful update
 }
 
 // SettingRecord represents a settings database record

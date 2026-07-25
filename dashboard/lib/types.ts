@@ -130,6 +130,15 @@ export interface Settings {
     compression_after_days: number
     cleanup_interval_hours: number
   }
+  geoip: {
+    provider: "ip-api" | "maxmind"
+    maxmind_license_key: string
+    maxmind_db_path: string
+    maxmind_url?: string
+    auto_update: boolean
+    update_interval_hours: number
+    last_updated_at?: string
+  }
 }
 
 export interface AuthResponse {

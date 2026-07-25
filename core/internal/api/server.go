@@ -101,7 +101,7 @@ func New(cfg *config.Config, log *logger.Logger, db *database.DB) *Server {
 	healthChecker := proxy.NewHealthChecker(proxyRepo, settingsRepo, tracker, log)
 
 	// GeoIP + source + pool services
-	geoSvc := services.NewGeoIPService(log)
+	geoSvc := services.NewGeoIPService(settingsRepo, log)
 	sourceSvc := services.NewSourceService(sourceRepo, proxyRepo, poolRepo, geoSvc, log)
 	// NOTE: Intentionally NOT wiring healthChecker into sourceSvc or starting a
 	// global periodic health check. The global HealthChecker uses a lenient
@@ -120,6 +120,7 @@ func New(cfg *config.Config, log *logger.Logger, db *database.DB) *Server {
 	proxyHandler.SetCacheInvalidator(proxy.ClearTransportCache)
 	logsHandler := handlers.NewLogsHandler(logRepo, log)
 	settingsHandler := handlers.NewSettingsHandler(settingsRepo, log, nil) // onUpdate set below
+	settingsHandler.SetGeoIPService(geoSvc)
 	websocketHandler := handlers.NewWebSocketHandler(dashboardRepo, proxyRepo, logRepo, log, cfg.CORSAllowedOrigins)
 	metricsHandler := handlers.NewMetricsHandler(log)
 	documentationHandler := handlers.NewDocumentationHandler()
@@ -161,8 +162,11 @@ func New(cfg *config.Config, log *logger.Logger, db *database.DB) *Server {
 		userHandler:          userHandler,
 	}
 
-	// Wire settings reload: when settings are updated via API, reload proxy server
+	// Wire settings reload: when settings are updated via API, reload proxy server & GeoIP service
 	settingsHandler.SetOnUpdate(func(ctx context.Context) {
+		if err := geoSvc.ReloadSettings(ctx); err != nil {
+			log.Error("failed to reload geoip settings after update", "error", err)
+		}
 		if s.proxyServer != nil {
 			if err := s.proxyServer.ReloadSettings(ctx); err != nil {
 				log.Error("failed to reload proxy settings after update", "error", err)
@@ -181,6 +185,7 @@ func New(cfg *config.Config, log *logger.Logger, db *database.DB) *Server {
 	// select on ctx.Done().
 	svcCtx, cancelServices := context.WithCancel(context.Background())
 	s.cancelServices = cancelServices
+	geoSvc.StartAutoUpdate(svcCtx)
 	sourceSvc.Start(svcCtx)
 	poolSvc.Start(svcCtx)
 	alertWatcher.Start(svcCtx)
@@ -291,6 +296,7 @@ func (s *Server) setupRoutes() {
 		r.Get("/settings", s.settingsHandler.Get)
 		r.Put("/settings", s.settingsHandler.Update)
 		r.Post("/settings/reset", s.settingsHandler.Reset)
+		r.Post("/settings/geoip/update-db", s.settingsHandler.UpdateGeoIPDB)
 
 		// Proxy Sources
 		r.Get("/sources", s.sourceHandler.List)

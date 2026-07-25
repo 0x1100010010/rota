@@ -8,6 +8,7 @@ import (
 
 	"github.com/alpkeskin/rota/core/internal/models"
 	"github.com/alpkeskin/rota/core/internal/repository"
+	"github.com/alpkeskin/rota/core/internal/services"
 	"github.com/alpkeskin/rota/core/pkg/logger"
 )
 
@@ -16,6 +17,7 @@ type SettingsHandler struct {
 	settingsRepo     *repository.SettingsRepository
 	logger           *logger.Logger
 	onSettingsUpdate func(ctx context.Context) // called after settings are persisted
+	geoSvc           *services.GeoIPService
 }
 
 // NewSettingsHandler creates a new SettingsHandler.
@@ -26,6 +28,11 @@ func NewSettingsHandler(settingsRepo *repository.SettingsRepository, log *logger
 		logger:           log,
 		onSettingsUpdate: onUpdate,
 	}
+}
+
+// SetGeoIPService sets the GeoIP service reference.
+func (h *SettingsHandler) SetGeoIPService(geoSvc *services.GeoIPService) {
+	h.geoSvc = geoSvc
 }
 
 // SetOnUpdate sets the callback invoked after settings are persisted.
@@ -144,6 +151,24 @@ func (h *SettingsHandler) Reset(w http.ResponseWriter, r *http.Request) {
 	h.jsonResponse(w, http.StatusOK, response)
 }
 
+// UpdateGeoIPDB handles manual trigger for downloading & updating MaxMind GeoIP database
+func (h *SettingsHandler) UpdateGeoIPDB(w http.ResponseWriter, r *http.Request) {
+	if h.geoSvc == nil {
+		h.errorResponse(w, http.StatusInternalServerError, "GeoIP service not configured")
+		return
+	}
+
+	if err := h.geoSvc.DownloadAndUpdateDB(r.Context()); err != nil {
+		h.logger.Error("failed to download maxmind geoip db", "error", err)
+		h.errorResponse(w, http.StatusBadRequest, fmt.Sprintf("Failed to update MaxMind GeoIP DB: %v", err))
+		return
+	}
+
+	h.jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"message": "MaxMind GeoIP database updated successfully",
+	})
+}
+
 // validateSettings validates settings configuration
 func (h *SettingsHandler) validateSettings(s *models.Settings) error {
 	// Validate rotation timeout
@@ -164,6 +189,15 @@ func (h *SettingsHandler) validateSettings(s *models.Settings) error {
 	// Validate healthcheck workers
 	if s.HealthCheck.Workers < 1 || s.HealthCheck.Workers > 100 {
 		return fmt.Errorf("healthcheck.workers must be between 1 and 100")
+	}
+
+	// Validate GeoIP provider
+	if s.GeoIP.Provider != "" && s.GeoIP.Provider != "ip-api" && s.GeoIP.Provider != "maxmind" {
+		return fmt.Errorf("geoip.provider must be either 'ip-api' or 'maxmind'")
+	}
+
+	if s.GeoIP.UpdateIntervalHours < 0 {
+		return fmt.Errorf("geoip.update_interval_hours must be non-negative")
 	}
 
 	return nil

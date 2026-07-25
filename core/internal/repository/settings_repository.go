@@ -152,6 +152,14 @@ func (r *SettingsRepository) Reset(ctx context.Context) error {
 			"compression_after_days": 7,
 			"cleanup_interval_hours": 24,
 		},
+		"geoip": {
+			"provider":              "ip-api",
+			"maxmind_license_key":   "",
+			"maxmind_db_path":       "data/GeoLite2-City.mmdb",
+			"maxmind_url":           "https://raw.githubusercontent.com/P3TERX/GeoLite.mmdb/download/GeoLite2-City.mmdb",
+			"auto_update":           false,
+			"update_interval_hours": 168,
+		},
 	}
 
 	for key, value := range defaults {

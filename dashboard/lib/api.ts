@@ -332,6 +332,12 @@ class ApiClient {
     })
   }
 
+  async updateGeoIPDB(): Promise<{ message: string }> {
+    return this.request<{ message: string }>("/api/v1/settings/geoip/update-db", {
+      method: "POST",
+    })
+  }
+
   // ── Proxy Sources ─────────────────────────────────────────────────────────
   async getSources(): Promise<{ sources: ProxySource[] }> {
     return this.request("/api/v1/sources")

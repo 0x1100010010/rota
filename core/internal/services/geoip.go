@@ -1,18 +1,25 @@
 package services
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/alpkeskin/rota/core/internal/models"
+	"github.com/alpkeskin/rota/core/internal/repository"
 	"github.com/alpkeskin/rota/core/pkg/logger"
+	"github.com/oschwald/geoip2-golang"
 )
 
 // ipAPIResponse is the response from ip-api.com batch endpoint
@@ -33,36 +40,278 @@ type cacheEntry struct {
 	cachedAt time.Time
 }
 
-// GeoIPService performs IP geolocation lookups via ip-api.com (free, no key needed)
-// It caches results for 24 h and batches requests in groups of 100.
+// GeoIPService performs IP geolocation lookups via ip-api.com or MaxMind GeoIP DB.
 type GeoIPService struct {
-	client   *http.Client
-	cache    map[string]cacheEntry
-	mu       sync.RWMutex
-	logger   *logger.Logger
-	cacheTTL time.Duration
+	client       *http.Client
+	cache        map[string]cacheEntry
+	mu           sync.RWMutex
+	logger       *logger.Logger
+	cacheTTL     time.Duration
+	settingsRepo *repository.SettingsRepository
 
-	// throttle serializes outbound batch requests and spaces them out to
-	// respect ip-api.com's free-tier rate limit.
+	settings      models.GeoIPSettings
+	maxmindReader *geoip2.Reader
+
+	// throttle serializes outbound batch requests for ip-api.com
 	reqMu       sync.Mutex
 	lastReq     time.Time
 	minInterval time.Duration
 }
 
 // NewGeoIPService creates a new GeoIPService
-func NewGeoIPService(log *logger.Logger) *GeoIPService {
+func NewGeoIPService(settingsRepo *repository.SettingsRepository, log *logger.Logger) *GeoIPService {
 	g := &GeoIPService{
 		client: &http.Client{
-			Timeout: 15 * time.Second,
+			Timeout: 30 * time.Second,
 		},
-		cache:       make(map[string]cacheEntry),
-		logger:      log,
-		cacheTTL:    24 * time.Hour,
-		minInterval: 1500 * time.Millisecond, // ~40 batch req/min, under the free-tier cap
+		cache:        make(map[string]cacheEntry),
+		logger:       log,
+		cacheTTL:     24 * time.Hour,
+		minInterval:  1500 * time.Millisecond, // ~40 batch req/min for ip-api.com
+		settingsRepo: settingsRepo,
+		settings: models.GeoIPSettings{
+			Provider:            "ip-api",
+			MaxMindDBPath:       "data/GeoLite2-City.mmdb",
+			AutoUpdate:          false,
+			UpdateIntervalHours: 168,
+		},
 	}
-	// Periodically evict expired cache entries so the map doesn't grow forever.
+
+	// Load initial settings if repo is present
+	if settingsRepo != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if s, err := settingsRepo.GetAll(ctx); err == nil && s != nil {
+			if s.GeoIP.Provider != "" {
+				g.settings = s.GeoIP
+			}
+		}
+		cancel()
+	}
+
+	// Try loading MaxMind DB if configured or file exists
+	if g.settings.Provider == "maxmind" || g.settings.MaxMindDBPath != "" {
+		g.reloadMaxMindReader()
+	}
+
 	go g.sweepLoop()
 	return g
+}
+
+// ReloadSettings updates the in-memory GeoIP settings and reloads reader if needed.
+func (g *GeoIPService) ReloadSettings(ctx context.Context) error {
+	if g.settingsRepo == nil {
+		return nil
+	}
+	s, err := g.settingsRepo.GetAll(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to load settings: %w", err)
+	}
+
+	g.mu.Lock()
+	g.settings = s.GeoIP
+	g.mu.Unlock()
+
+	if s.GeoIP.Provider == "maxmind" {
+		g.reloadMaxMindReader()
+	}
+	return nil
+}
+
+func (g *GeoIPService) reloadMaxMindReader() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	dbPath := g.settings.MaxMindDBPath
+	if dbPath == "" {
+		dbPath = "data/GeoLite2-City.mmdb"
+	}
+
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		g.logger.Warn("maxmind db file not found", "path", dbPath)
+		return
+	}
+
+	reader, err := geoip2.Open(dbPath)
+	if err != nil {
+		g.logger.Error("failed to open maxmind db", "path", dbPath, "error", err)
+		return
+	}
+
+	if g.maxmindReader != nil {
+		_ = g.maxmindReader.Close()
+	}
+	g.maxmindReader = reader
+	g.logger.Info("loaded maxmind geoip db", "path", dbPath)
+}
+
+// StartAutoUpdate runs background loop to auto-update MaxMind DB on interval.
+func (g *GeoIPService) StartAutoUpdate(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				g.mu.RLock()
+				provider := g.settings.Provider
+				autoUpdate := g.settings.AutoUpdate
+				intervalHours := g.settings.UpdateIntervalHours
+				lastUpdated := g.settings.LastUpdatedAt
+				dbPath := g.settings.MaxMindDBPath
+				g.mu.RUnlock()
+
+				if provider != "maxmind" || !autoUpdate {
+					continue
+				}
+
+				if intervalHours <= 0 {
+					intervalHours = 168
+				}
+
+				_, err := os.Stat(dbPath)
+				dbMissing := os.IsNotExist(err)
+
+				if dbMissing || time.Since(lastUpdated) >= time.Duration(intervalHours)*time.Hour {
+					g.logger.Info("triggering scheduled maxmind db auto-update")
+					if err := g.DownloadAndUpdateDB(ctx); err != nil {
+						g.logger.Error("scheduled maxmind db update failed", "error", err)
+					}
+				}
+			}
+		}
+	}()
+}
+
+// DownloadAndUpdateDB downloads MaxMind GeoIP DB archive and updates local reader.
+func (g *GeoIPService) DownloadAndUpdateDB(ctx context.Context) error {
+	g.mu.RLock()
+	licenseKey := g.settings.MaxMindLicenseKey
+	customURL := g.settings.MaxMindURL
+	dbPath := g.settings.MaxMindDBPath
+	g.mu.RUnlock()
+
+	if dbPath == "" {
+		dbPath = "data/GeoLite2-City.mmdb"
+	}
+
+	downloadURL := customURL
+	if downloadURL == "" {
+		if licenseKey != "" {
+			downloadURL = fmt.Sprintf("https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-City&license_key=%s&suffix=tar.gz", licenseKey)
+		} else {
+			// Default to P3TERX GeoLite2-City mirror (updated daily on GitHub)
+			downloadURL = "https://raw.githubusercontent.com/P3TERX/GeoLite.mmdb/download/GeoLite2-City.mmdb"
+		}
+	}
+
+	g.logger.Info("downloading maxmind geoip db...", "url", downloadURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create download request: %w", err)
+	}
+
+	resp, err := g.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to download maxmind db: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("maxmind download returned HTTP %d", resp.StatusCode)
+	}
+
+	mmdbBytes, err := extractMMDBData(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to extract mmdb database: %w", err)
+	}
+
+	dir := filepath.Dir(dbPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory %s: %w", dir, err)
+	}
+
+	tmpFile := dbPath + ".tmp"
+	if err := os.WriteFile(tmpFile, mmdbBytes, 0644); err != nil {
+		return fmt.Errorf("failed to write temp db file: %w", err)
+	}
+
+	newReader, err := geoip2.Open(tmpFile)
+	if err != nil {
+		_ = os.Remove(tmpFile)
+		return fmt.Errorf("downloaded maxmind database is invalid: %w", err)
+	}
+
+	if err := os.Rename(tmpFile, dbPath); err != nil {
+		_ = newReader.Close()
+		_ = os.Remove(tmpFile)
+		return fmt.Errorf("failed to replace maxmind db file: %w", err)
+	}
+
+	g.mu.Lock()
+	if g.maxmindReader != nil {
+		_ = g.maxmindReader.Close()
+	}
+	g.maxmindReader = newReader
+	now := time.Now()
+	g.settings.LastUpdatedAt = now
+	g.mu.Unlock()
+
+	if g.settingsRepo != nil {
+		if s, err := g.settingsRepo.GetAll(ctx); err == nil && s != nil {
+			s.GeoIP.LastUpdatedAt = now
+			_ = g.settingsRepo.Set(ctx, "geoip", map[string]any{
+				"provider":              s.GeoIP.Provider,
+				"maxmind_license_key":   s.GeoIP.MaxMindLicenseKey,
+				"maxmind_db_path":       s.GeoIP.MaxMindDBPath,
+				"maxmind_url":           s.GeoIP.MaxMindURL,
+				"auto_update":           s.GeoIP.AutoUpdate,
+				"update_interval_hours": s.GeoIP.UpdateIntervalHours,
+				"last_updated_at":       now.Format(time.RFC3339),
+			})
+		}
+	}
+
+	g.logger.Info("successfully updated maxmind geoip db", "path", dbPath, "updated_at", now)
+	return nil
+}
+
+// extractMMDBData reads response stream and returns raw .mmdb file content
+func extractMMDBData(r io.Reader) ([]byte, error) {
+	header := make([]byte, 2)
+	n, err := io.ReadFull(r, header)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		return nil, err
+	}
+
+	combinedReader := io.MultiReader(strings.NewReader(string(header[:n])), r)
+
+	if n == 2 && header[0] == 0x1f && header[1] == 0x8b {
+		gzr, err := gzip.NewReader(combinedReader)
+		if err != nil {
+			return nil, err
+		}
+		defer gzr.Close()
+
+		tr := tar.NewReader(gzr)
+		for {
+			hdr, err := tr.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return io.ReadAll(gzr)
+			}
+			if strings.HasSuffix(hdr.Name, ".mmdb") {
+				return io.ReadAll(tr)
+			}
+		}
+		return nil, fmt.Errorf("no .mmdb file found in tar archive")
+	}
+
+	return io.ReadAll(combinedReader)
 }
 
 // sweepLoop periodically drops expired cache entries.
@@ -81,8 +330,7 @@ func (g *GeoIPService) sweepLoop() {
 	}
 }
 
-// throttle blocks until at least minInterval has elapsed since the previous
-// outbound request, so batches are spaced out. Respects ctx cancellation.
+// throttle blocks until at least minInterval has elapsed since the previous outbound request
 func (g *GeoIPService) throttle(ctx context.Context) error {
 	g.reqMu.Lock()
 	defer g.reqMu.Unlock()
@@ -99,8 +347,7 @@ func (g *GeoIPService) throttle(ctx context.Context) error {
 	return nil
 }
 
-// parseRetryAfter reads a Retry-After header (delta-seconds form) or returns
-// the fallback duration when it's absent/unparseable.
+// parseRetryAfter reads a Retry-After header
 func parseRetryAfter(h string, fallback time.Duration) time.Duration {
 	if secs, err := strconv.Atoi(strings.TrimSpace(h)); err == nil && secs > 0 {
 		return time.Duration(secs) * time.Second
@@ -108,14 +355,63 @@ func parseRetryAfter(h string, fallback time.Duration) time.Duration {
 	return fallback
 }
 
-// extractIP parses "host:port" and returns just the host IP.
+// extractIP parses "host:port" and returns host IP.
 func extractIP(address string) string {
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
-		// maybe no port
 		return strings.TrimSpace(address)
 	}
 	return strings.TrimSpace(host)
+}
+
+// lookupMaxMind performs local GeoIP lookup using MaxMind DB reader.
+func (g *GeoIPService) lookupMaxMind(ipStr string) (*models.GeoInfo, error) {
+	g.mu.RLock()
+	reader := g.maxmindReader
+	g.mu.RUnlock()
+
+	if reader == nil {
+		return nil, fmt.Errorf("maxmind reader is not initialized")
+	}
+
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return nil, fmt.Errorf("invalid IP address: %s", ipStr)
+	}
+
+	record, err := reader.City(ip)
+	if err != nil {
+		return nil, fmt.Errorf("maxmind lookup failed: %w", err)
+	}
+
+	countryCode := record.Country.IsoCode
+	countryName := record.Country.Names["en"]
+	var regionName string
+	if len(record.Subdivisions) > 0 {
+		regionName = record.Subdivisions[0].Names["en"]
+	}
+	cityName := record.City.Names["en"]
+	lat := record.Location.Latitude
+	lon := record.Location.Longitude
+
+	var isp string
+	if asnRecord, err := reader.ASN(ip); err == nil {
+		isp = asnRecord.AutonomousSystemOrganization
+	}
+
+	if countryCode == "" && countryName == "" {
+		return nil, fmt.Errorf("IP %s not found in MaxMind DB", ipStr)
+	}
+
+	return &models.GeoInfo{
+		CountryCode: countryCode,
+		CountryName: countryName,
+		RegionName:  regionName,
+		CityName:    cityName,
+		ISP:         isp,
+		Latitude:    lat,
+		Longitude:   lon,
+	}, nil
 }
 
 // LookupOne returns GeoInfo for a single proxy address ("host:port" or bare IP).
@@ -132,7 +428,20 @@ func (g *GeoIPService) LookupOne(ctx context.Context, address string) (*models.G
 		geo := entry.geo
 		return &geo, nil
 	}
+	provider := g.settings.Provider
+	hasMaxMind := g.maxmindReader != nil
 	g.mu.RUnlock()
+
+	if provider == "maxmind" && hasMaxMind {
+		geo, err := g.lookupMaxMind(ip)
+		if err == nil {
+			g.mu.Lock()
+			g.cache[ip] = cacheEntry{geo: *geo, cachedAt: time.Now()}
+			g.mu.Unlock()
+			return geo, nil
+		}
+		g.logger.Warn("maxmind lookup failed, falling back to ip-api", "ip", ip, "error", err)
+	}
 
 	results, err := g.lookupBatch(ctx, []string{ip})
 	if err != nil {
@@ -145,15 +454,15 @@ func (g *GeoIPService) LookupOne(ctx context.Context, address string) (*models.G
 }
 
 // LookupBatch resolves GeoInfo for up to 100 addresses at once.
-// Returns map[address] -> GeoInfo.
 func (g *GeoIPService) LookupBatch(ctx context.Context, addresses []string) map[string]models.GeoInfo {
 	result := make(map[string]models.GeoInfo)
 
-	// deduplicate & separate cached vs needed
-	ipToAddr := make(map[string]string) // ip -> original address
+	ipToAddr := make(map[string]string)
 	var needed []string
 
 	g.mu.RLock()
+	provider := g.settings.Provider
+	hasMaxMind := g.maxmindReader != nil
 	for _, addr := range addresses {
 		ip := extractIP(addr)
 		if ip == "" {
@@ -172,8 +481,27 @@ func (g *GeoIPService) LookupBatch(ctx context.Context, addresses []string) map[
 		return result
 	}
 
-	// ip-api.com batch endpoint caps each request at 100 queries; chunk to fit.
-	// lookupBatchRaw already caches successful lookups, so no re-caching here.
+	if provider == "maxmind" && hasMaxMind {
+		var remaining []string
+		for _, ip := range needed {
+			geo, err := g.lookupMaxMind(ip)
+			if err == nil {
+				if addr, ok := ipToAddr[ip]; ok {
+					result[addr] = *geo
+				}
+				g.mu.Lock()
+				g.cache[ip] = cacheEntry{geo: *geo, cachedAt: time.Now()}
+				g.mu.Unlock()
+			} else {
+				remaining = append(remaining, ip)
+			}
+		}
+		if len(remaining) == 0 {
+			return result
+		}
+		needed = remaining
+	}
+
 	const batchSize = 100
 	for i := 0; i < len(needed); i += batchSize {
 		end := i + batchSize
@@ -197,7 +525,7 @@ func (g *GeoIPService) LookupBatch(ctx context.Context, addresses []string) map[
 	return result
 }
 
-// lookupBatch fetches geo data for a slice of IPs (max 100)
+// lookupBatch fetches geo data for a slice of IPs
 func (g *GeoIPService) lookupBatch(ctx context.Context, ips []string) ([]models.GeoInfo, error) {
 	raw, err := g.lookupBatchRaw(ctx, ips)
 	if err != nil {
@@ -210,8 +538,7 @@ func (g *GeoIPService) lookupBatch(ctx context.Context, ips []string) ([]models.
 	return out, nil
 }
 
-// doBatchRequest POSTs the marshalled batch body to ip-api.com, applying the
-// outbound throttle and retrying with a backoff on HTTP 429 (rate limited).
+// doBatchRequest POSTs batch body to ip-api.com
 func (g *GeoIPService) doBatchRequest(ctx context.Context, body []byte) ([]ipAPIResponse, error) {
 	const maxAttempts = 3
 	var lastErr error
@@ -260,13 +587,12 @@ func (g *GeoIPService) doBatchRequest(ctx context.Context, body []byte) ([]ipAPI
 	return nil, lastErr
 }
 
-// lookupBatchRaw fetches geo data and returns map[ip] -> GeoInfo
+// lookupBatchRaw fetches geo data from ip-api.com and returns map[ip] -> GeoInfo
 func (g *GeoIPService) lookupBatchRaw(ctx context.Context, ips []string) (map[string]models.GeoInfo, error) {
 	if len(ips) == 0 {
 		return nil, nil
 	}
 
-	// Build JSON body: [{"query":"1.2.3.4","fields":"..."}, ...]
 	type reqItem struct {
 		Query  string `json:"query"`
 		Fields string `json:"fields"`
@@ -309,65 +635,11 @@ func (g *GeoIPService) lookupBatchRaw(ctx context.Context, ips []string) (map[st
 	return result, nil
 }
 
-// EnrichProxies calls ip-api.com for all addresses and returns map[address]->GeoInfo
+// EnrichProxies calls current GeoIP provider for all addresses and returns map[address]->GeoInfo
 func (g *GeoIPService) EnrichProxies(ctx context.Context, addresses []string) map[string]models.GeoInfo {
 	if len(addresses) == 0 {
 		return nil
 	}
 
-	// Deduplicate IPs
-	ipToAddr := make(map[string]string)
-	for _, addr := range addresses {
-		ip := extractIP(addr)
-		if ip != "" {
-			ipToAddr[ip] = addr
-		}
-	}
-
-	ips := make([]string, 0, len(ipToAddr))
-	for ip := range ipToAddr {
-		ips = append(ips, ip)
-	}
-
-	result := make(map[string]models.GeoInfo)
-
-	// Check cache
-	var needed []string
-	g.mu.RLock()
-	for _, ip := range ips {
-		if entry, ok := g.cache[ip]; ok && time.Since(entry.cachedAt) < g.cacheTTL {
-			if addr, ok2 := ipToAddr[ip]; ok2 {
-				result[addr] = entry.geo
-			}
-		} else {
-			needed = append(needed, ip)
-		}
-	}
-	g.mu.RUnlock()
-
-	if len(needed) == 0 {
-		return result
-	}
-
-	const batchSize = 100
-	for i := 0; i < len(needed); i += batchSize {
-		end := i + batchSize
-		if end > len(needed) {
-			end = len(needed)
-		}
-		batch := needed[i:end]
-
-		raw, err := g.lookupBatchRaw(ctx, batch)
-		if err != nil {
-			g.logger.Warn("geoip enrichment batch failed", "error", err, "ips", len(batch))
-			continue
-		}
-		for ip, geo := range raw {
-			if addr, ok := ipToAddr[ip]; ok {
-				result[addr] = geo
-			}
-		}
-	}
-
-	return result
+	return g.LookupBatch(ctx, addresses)
 }

@@ -20,6 +20,11 @@ require (
 )
 
 require (
+	github.com/oschwald/geoip2-golang v1.11.0 // indirect
+	github.com/oschwald/maxminddb-golang v1.13.0 // indirect
+)
+
+require (
 	github.com/KyleBanks/depth v1.2.1 // indirect
 	github.com/ebitengine/purego v0.8.1 // indirect
 	github.com/gammazero/deque v0.2.0 // indirect

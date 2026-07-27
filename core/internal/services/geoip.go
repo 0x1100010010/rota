@@ -42,12 +42,13 @@ type cacheEntry struct {
 
 // GeoIPService performs IP geolocation lookups via ip-api.com or MaxMind GeoIP DB.
 type GeoIPService struct {
-	client       *http.Client
-	cache        map[string]cacheEntry
-	mu           sync.RWMutex
-	logger       *logger.Logger
-	cacheTTL     time.Duration
-	settingsRepo *repository.SettingsRepository
+	client         *http.Client
+	downloadClient *http.Client
+	cache          map[string]cacheEntry
+	mu             sync.RWMutex
+	logger         *logger.Logger
+	cacheTTL       time.Duration
+	settingsRepo   *repository.SettingsRepository
 
 	settings      models.GeoIPSettings
 	maxmindReader *geoip2.Reader
@@ -63,6 +64,9 @@ func NewGeoIPService(settingsRepo *repository.SettingsRepository, log *logger.Lo
 	g := &GeoIPService{
 		client: &http.Client{
 			Timeout: 30 * time.Second,
+		},
+		downloadClient: &http.Client{
+			Timeout: 5 * time.Minute,
 		},
 		cache:        make(map[string]cacheEntry),
 		logger:       log,
@@ -207,13 +211,17 @@ func (g *GeoIPService) DownloadAndUpdateDB(ctx context.Context) error {
 		}
 	}
 
-	g.logger.Info("downloading maxmind geoip db...", "url", downloadURL)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	// Use a dedicated 5-minute timeout for database downloads (files can be 60-100MB+)
+	dlCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
+	g.logger.Info("downloading maxmind geoip db...", "url", downloadURL, "timeout", "5m")
+	req, err := http.NewRequestWithContext(dlCtx, http.MethodGet, downloadURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create download request: %w", err)
 	}
 
-	resp, err := g.client.Do(req)
+	resp, err := g.downloadClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to download maxmind db: %w", err)
 	}

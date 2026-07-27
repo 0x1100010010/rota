@@ -137,7 +137,45 @@ func (r *UserRepository) Create(ctx context.Context, req models.CreateProxyUserR
 
 // Update modifies an existing user
 func (r *UserRepository) Update(ctx context.Context, id int, req models.UpdateProxyUserRequest) (*models.ProxyUser, error) {
-	// Build optional password hash
+	current, err := r.GetByID(ctx, id)
+	if err != nil || current == nil {
+		return nil, fmt.Errorf("user not found: %w", err)
+	}
+
+	enabled := current.Enabled
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+
+	allowExport := current.AllowWorkingProxiesExport
+	if req.AllowWorkingProxiesExport != nil {
+		allowExport = *req.AllowWorkingProxiesExport
+	}
+
+	mainPoolID := current.MainPoolID
+	if req.MainPoolID != nil {
+		if *req.MainPoolID <= 0 {
+			mainPoolID = nil
+		} else {
+			mainPoolID = req.MainPoolID
+		}
+	}
+
+	fallbackPoolIDs := current.FallbackPoolIDs
+	if req.FallbackPoolIDs != nil {
+		fallbackPoolIDs = req.FallbackPoolIDs
+	}
+
+	maxRetries := current.MaxRetries
+	if req.MaxRetries > 0 {
+		maxRetries = req.MaxRetries
+	}
+
+	requestsPerMin := current.RequestsPerMinute
+	if req.RequestsPerMinute != nil {
+		requestsPerMin = *req.RequestsPerMinute
+	}
+
 	var hashPtr *string
 	if req.Password != "" {
 		h, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
@@ -148,26 +186,21 @@ func (r *UserRepository) Update(ctx context.Context, id int, req models.UpdatePr
 		hashPtr = &s
 	}
 
-	fbIDs := req.FallbackPoolIDs
-	if fbIDs == nil {
-		fbIDs = []int{}
-	}
-
 	var u models.ProxyUser
-	err := r.db.Pool.QueryRow(ctx, `
+	err = r.db.Pool.QueryRow(ctx, `
 		UPDATE proxy_users SET
 			password_hash                = CASE WHEN $1::TEXT IS NOT NULL THEN $1 ELSE password_hash END,
-			enabled                      = COALESCE($2, enabled),
-			allow_working_proxies_export = COALESCE($3, allow_working_proxies_export),
+			enabled                      = $2,
+			allow_working_proxies_export = $3,
 			main_pool_id                 = $4,
 			fallback_pool_ids            = $5,
-			max_retries                  = CASE WHEN $6 > 0 THEN $6 ELSE max_retries END,
-			requests_per_minute          = COALESCE($7, requests_per_minute),
+			max_retries                  = $6,
+			requests_per_minute          = $7,
 			updated_at                   = NOW()
 		WHERE id = $8
 		RETURNING id, username, enabled, allow_working_proxies_export, main_pool_id, fallback_pool_ids, max_retries,
 		          COALESCE(requests_per_minute, 0), created_at, updated_at
-	`, hashPtr, req.Enabled, req.AllowWorkingProxiesExport, req.MainPoolID, fbIDs, req.MaxRetries, req.RequestsPerMinute, id,
+	`, hashPtr, enabled, allowExport, mainPoolID, fallbackPoolIDs, maxRetries, requestsPerMin, id,
 	).Scan(&u.ID, &u.Username, &u.Enabled, &u.AllowWorkingProxiesExport, &u.MainPoolID, &u.FallbackPoolIDs,
 		&u.MaxRetries, &u.RequestsPerMinute, &u.CreatedAt, &u.UpdatedAt)
 

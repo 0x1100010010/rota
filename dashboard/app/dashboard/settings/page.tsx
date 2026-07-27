@@ -34,6 +34,8 @@ import {
   KeyRound,
   Eye,
   EyeOff,
+  Globe,
+  Download,
 } from "lucide-react"
 import { api } from "@/lib/api"
 import { Settings } from "@/lib/types"
@@ -52,6 +54,21 @@ export default function SettingsPage() {
   const [confirmPass, setConfirmPass] = React.useState("")
   const [showPass, setShowPass] = React.useState(false)
   const [changingPass, setChangingPass] = React.useState(false)
+  const [isUpdatingGeoDB, setIsUpdatingGeoDB] = React.useState(false)
+
+  const handleUpdateGeoDB = async () => {
+    try {
+      setIsUpdatingGeoDB(true)
+      const res = await api.updateGeoIPDB()
+      toast.success(res.message || "MaxMind GeoIP database updated successfully")
+      const updated = await api.getSettings()
+      setSettings(updated)
+    } catch (error: any) {
+      toast.error(error.message || "Failed to update MaxMind GeoIP DB")
+    } finally {
+      setIsUpdatingGeoDB(false)
+    }
+  }
 
   React.useEffect(() => {
     const fetchSettings = async () => {
@@ -856,6 +873,188 @@ export default function SettingsPage() {
                   </ul>
                 </div>
               </>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* GeoIP Configuration */}
+        <Card className="md:col-span-2">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Globe className="h-5 w-5" />
+                <CardTitle>GeoIP Configuration</CardTitle>
+              </div>
+              {settings.geoip?.provider === "maxmind" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleUpdateGeoDB}
+                  disabled={isUpdatingGeoDB || isSaving}
+                >
+                  {isUpdatingGeoDB ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Downloading DB...
+                    </>
+                  ) : (
+                    <>
+                      <Download className="mr-2 h-4 w-4" />
+                      Update DB Now
+                    </>
+                  )}
+                </Button>
+              )}
+            </div>
+            <CardDescription>
+              Select geolocation lookup database provider (ip-api.com or MaxMind GeoIP DB)
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="geoip-provider">GeoIP Provider</Label>
+              <Select
+                value={settings.geoip?.provider || "ip-api"}
+                onValueChange={(value: "ip-api" | "maxmind") =>
+                  setSettings({
+                    ...settings,
+                    geoip: {
+                      provider: value,
+                      maxmind_license_key: settings.geoip?.maxmind_license_key || "",
+                      maxmind_db_path: settings.geoip?.maxmind_db_path || "data/GeoLite2-City.mmdb",
+                      maxmind_url: settings.geoip?.maxmind_url || "",
+                      auto_update: settings.geoip?.auto_update ?? false,
+                      update_interval_hours: settings.geoip?.update_interval_hours || 168,
+                      last_updated_at: settings.geoip?.last_updated_at,
+                    },
+                  })
+                }
+              >
+                <SelectTrigger id="geoip-provider">
+                  <SelectValue placeholder="Select provider" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ip-api">ip-api.com (Free Web API)</SelectItem>
+                  <SelectItem value="maxmind">MaxMind GeoIP DB (Local MMDB)</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {settings.geoip?.provider === "maxmind"
+                  ? "Uses a local MaxMind GeoIP database file for instant, rate-limit-free lookups."
+                  : "Uses ip-api.com batch API endpoint (rate limited for free tier)."}
+              </p>
+            </div>
+
+            {settings.geoip?.provider === "maxmind" && (
+              <div className="grid gap-4 md:grid-cols-2 pt-2 border-t">
+                <div className="space-y-2">
+                  <Label htmlFor="maxmind-key">MaxMind License Key</Label>
+                  <Input
+                    id="maxmind-key"
+                    type={showPass ? "text" : "password"}
+                    value={settings.geoip?.maxmind_license_key || ""}
+                    onChange={(e) =>
+                      setSettings({
+                        ...settings,
+                        geoip: { ...settings.geoip, maxmind_license_key: e.target.value },
+                      })
+                    }
+                    placeholder="Enter MaxMind account license key"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Required to download official GeoLite2-City database automatically.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="maxmind-path">Database Storage Path</Label>
+                  <Input
+                    id="maxmind-path"
+                    type="text"
+                    value={settings.geoip?.maxmind_db_path || "data/GeoLite2-City.mmdb"}
+                    onChange={(e) =>
+                      setSettings({
+                        ...settings,
+                        geoip: { ...settings.geoip, maxmind_db_path: e.target.value },
+                      })
+                    }
+                    placeholder="data/GeoLite2-City.mmdb"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Path where `.mmdb` file is stored locally.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="maxmind-url">Download URL</Label>
+                  <Input
+                    id="maxmind-url"
+                    type="url"
+                    value={settings.geoip?.maxmind_url ?? "https://raw.githubusercontent.com/P3TERX/GeoLite.mmdb/download/GeoLite2-City.mmdb"}
+                    onChange={(e) =>
+                      setSettings({
+                        ...settings,
+                        geoip: { ...settings.geoip, maxmind_url: e.target.value },
+                      })
+                    }
+                    placeholder="https://raw.githubusercontent.com/P3TERX/GeoLite.mmdb/download/GeoLite2-City.mmdb"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Defaults to P3TERX daily GeoLite2-City mirror if License Key is omitted.
+                  </p>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="geoip-autoupdate">Auto-update Database</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Automatically update database on interval
+                      </p>
+                    </div>
+                    <Switch
+                      id="geoip-autoupdate"
+                      checked={settings.geoip?.auto_update ?? false}
+                      onCheckedChange={(checked) =>
+                        setSettings({
+                          ...settings,
+                          geoip: { ...settings.geoip, auto_update: checked },
+                        })
+                      }
+                    />
+                  </div>
+
+                  {settings.geoip?.auto_update && (
+                    <div className="space-y-2">
+                      <Label htmlFor="update-interval">Update Interval (hours)</Label>
+                      <Input
+                        id="update-interval"
+                        type="number"
+                        min="1"
+                        value={settings.geoip?.update_interval_hours || 168}
+                        onChange={(e) =>
+                          setSettings({
+                            ...settings,
+                            geoip: {
+                              ...settings.geoip,
+                              update_interval_hours: parseInt(e.target.value) || 168,
+                            },
+                          })
+                        }
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Recommended: 168 hours (7 days)
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {settings.geoip?.last_updated_at && (
+                  <div className="md:col-span-2 rounded-lg bg-muted p-3 text-xs text-muted-foreground">
+                    Last updated: {new Date(settings.geoip.last_updated_at).toLocaleString()}
+                  </div>
+                )}
+              </div>
             )}
           </CardContent>
         </Card>

@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react"
 import {
   Plus, Trash2, Pencil, Loader2, UserCheck, UserX,
   ShieldCheck, Link2, ChevronDown, ChevronUp, Copy, Eye, EyeOff,
+  Download, ExternalLink, KeyRound, Check
 } from "lucide-react"
 import { toast } from "sonner"
 import { api } from "@/lib/api"
@@ -13,7 +14,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription
 } from "@/components/ui/dialog"
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -32,6 +33,7 @@ const DEFAULT_FORM: CreateProxyUserRequest = {
   username: "",
   password: "",
   enabled: true,
+  allow_working_proxies_export: false,
   main_pool_id: null,
   fallback_pool_ids: [],
   max_retries: 5,
@@ -48,6 +50,13 @@ export default function UsersPage() {
   const [form, setForm] = useState<CreateProxyUserRequest>(DEFAULT_FORM)
   const [saving, setSaving] = useState(false)
   const [showPass, setShowPass] = useState(false)
+
+  // Working Proxies API Link Modal State
+  const [apiLinkUser, setApiLinkUser] = useState<ProxyUser | null>(null)
+  const [apiLinkPool, setApiLinkPool] = useState<string>("default")
+  const [apiLinkCount, setApiLinkCount] = useState<string>("")
+  const [apiLinkFormat, setApiLinkFormat] = useState<string>("raw")
+  const [copiedLink, setCopiedLink] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -85,6 +94,7 @@ export default function UsersPage() {
       username: u.username,
       password: "",
       enabled: u.enabled,
+      allow_working_proxies_export: u.allow_working_proxies_export ?? false,
       main_pool_id: u.main_pool_id ?? null,
       fallback_pool_ids: u.fallback_pool_ids ?? [],
       max_retries: u.max_retries,
@@ -102,6 +112,7 @@ export default function UsersPage() {
       if (editUser) {
         const upd: any = {
           enabled: form.enabled,
+          allow_working_proxies_export: form.allow_working_proxies_export,
           main_pool_id: form.main_pool_id,
           fallback_pool_ids: form.fallback_pool_ids,
           max_retries: form.max_retries,
@@ -141,6 +152,14 @@ export default function UsersPage() {
     } catch { toast.error("Failed to toggle user") }
   }
 
+  const toggleAllowExport = async (u: ProxyUser) => {
+    try {
+      await api.updateProxyUser(u.id, { allow_working_proxies_export: !u.allow_working_proxies_export })
+      toast.success(`Working proxy export ${!u.allow_working_proxies_export ? "enabled" : "disabled"} for ${u.username}`)
+      load()
+    } catch { toast.error("Failed to toggle export permission") }
+  }
+
   const toggleFallback = (poolId: number) => {
     const current = form.fallback_pool_ids ?? []
     if (current.includes(poolId)) {
@@ -155,6 +174,36 @@ export default function UsersPage() {
     const url = `http://${u.username}:***@${host}:${PROXY_PORT}`
     navigator.clipboard.writeText(url)
     toast.success("Proxy URL copied (replace *** with password)")
+  }
+
+  const openApiLinkModal = (u: ProxyUser) => {
+    setApiLinkUser(u)
+    setApiLinkPool("default")
+    setApiLinkCount("")
+    setApiLinkFormat("raw")
+    setCopiedLink(false)
+  }
+
+  const generateExportUrl = (u: ProxyUser) => {
+    const protocol = window.location.protocol
+    const host = window.location.hostname
+    const port = process.env.NEXT_PUBLIC_API_PORT || (window.location.port ? window.location.port : (protocol === "https:" ? "443" : "80"))
+    const portSuffix = (port === "80" || port === "443") ? "" : `:${port}`
+    const baseUrl = `${protocol}//${host}${portSuffix}/api/v1/proxy-users/export-working-proxies`
+    const params = new URLSearchParams()
+    params.set("username", u.username)
+    params.set("password", "YOUR_PASSWORD")
+
+    if (apiLinkPool && apiLinkPool !== "default") {
+      params.set("pool", apiLinkPool)
+    }
+    if (apiLinkCount && parseInt(apiLinkCount) > 0) {
+      params.set("count", apiLinkCount)
+    }
+    if (apiLinkFormat === "url") {
+      params.set("format", "url")
+    }
+    return `${baseUrl}?${params.toString()}`
   }
 
   if (loading) {
@@ -252,6 +301,7 @@ export default function UsersPage() {
                   <TableHead>Max Retries</TableHead>
                   <TableHead>Rate Limit</TableHead>
                   <TableHead>Enabled</TableHead>
+                  <TableHead>Export API</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -290,8 +340,32 @@ export default function UsersPage() {
                     <TableCell>
                       <Switch checked={u.enabled} onCheckedChange={() => toggleEnabled(u)} />
                     </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1.5">
+                        <Switch
+                          checked={u.allow_working_proxies_export ?? false}
+                          onCheckedChange={() => toggleAllowExport(u)}
+                        />
+                        {u.allow_working_proxies_export ? (
+                          <Badge variant="outline" className="text-[10px] text-green-600 border-green-200 bg-green-50">Allowed</Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px] text-muted-foreground">Disabled</Badge>
+                        )}
+                      </div>
+                    </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
+                        {u.allow_working_proxies_export && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => openApiLinkModal(u)}
+                            title="Working Proxies API Link"
+                            className="text-blue-500 hover:text-blue-600 hover:bg-blue-50"
+                          >
+                            <Download className="h-4 w-4" />
+                          </Button>
+                        )}
                         <Button variant="ghost" size="icon" onClick={() => copyProxyURL(u)} title="Copy proxy URL">
                           <Copy className="h-4 w-4" />
                         </Button>
@@ -454,6 +528,23 @@ export default function UsersPage() {
               </p>
             </div>
 
+            {/* Allow Working Proxies Export */}
+            <div className="flex items-center justify-between border p-3 rounded-lg bg-muted/20">
+              <div className="space-y-0.5">
+                <Label htmlFor="user-export-toggle" className="font-medium text-sm cursor-pointer">
+                  Allow Working Proxies Export
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Allows querying working pool proxies via API link with user auth & pool parameters.
+                </p>
+              </div>
+              <Switch
+                id="user-export-toggle"
+                checked={form.allow_working_proxies_export ?? false}
+                onCheckedChange={v => setForm({ ...form, allow_working_proxies_export: v })}
+              />
+            </div>
+
             {/* Enabled */}
             <div className="flex items-center gap-2">
               <Switch
@@ -470,6 +561,104 @@ export default function UsersPage() {
               {saving && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
               {editUser ? "Save Changes" : "Create User"}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Working Proxies Export Link Modal */}
+      <Dialog open={!!apiLinkUser} onOpenChange={open => !open && setApiLinkUser(null)}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Download className="h-5 w-5 text-primary" />
+              Working Proxies API Link
+            </DialogTitle>
+            <DialogDescription>
+              Generate API query link to fetch line-delimited working proxies for <strong>{apiLinkUser?.username}</strong>.
+            </DialogDescription>
+          </DialogHeader>
+
+          {apiLinkUser && (
+            <div className="flex flex-col gap-4 py-2 text-sm">
+              {/* Pool Selection */}
+              <div className="flex flex-col gap-1.5">
+                <Label>Target Pool</Label>
+                <Select value={apiLinkPool} onValueChange={setApiLinkPool}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Default (Main Pool)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="default">Default (User's Main Pool: {apiLinkUser.main_pool_id ? poolName(apiLinkUser.main_pool_id) : "None"})</SelectItem>
+                    {pools.map(p => (
+                      <SelectItem key={p.id} value={p.name}>
+                        {p.name} (ID: {p.id} · {p.active_proxies} active)
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Specified via <code className="text-xs bg-muted px-1 rounded">?pool=name</code> or <code className="text-xs bg-muted px-1 rounded">?pool_id=id</code>. Omit to default to user's main pool.
+                </p>
+              </div>
+
+              {/* Count Limit & Format */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <Label>Count Limit (Optional)</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    placeholder="e.g. 50 (empty = all)"
+                    value={apiLinkCount}
+                    onChange={e => setApiLinkCount(e.target.value)}
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label>Proxy Format</Label>
+                  <Select value={apiLinkFormat} onValueChange={setApiLinkFormat}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="raw">address[:user:pass]</SelectItem>
+                      <SelectItem value="url">protocol://[user:pass@]address</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {/* Generated URL */}
+              <div className="flex flex-col gap-1.5">
+                <Label className="font-semibold">API Endpoint URL</Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    readOnly
+                    value={generateExportUrl(apiLinkUser)}
+                    className="font-mono text-xs bg-muted/50 select-all"
+                  />
+                  <Button
+                    variant="secondary"
+                    className="shrink-0"
+                    onClick={() => {
+                      navigator.clipboard.writeText(generateExportUrl(apiLinkUser))
+                      setCopiedLink(true)
+                      toast.success("API link copied to clipboard")
+                      setTimeout(() => setCopiedLink(false), 2000)
+                    }}
+                  >
+                    {copiedLink ? <Check className="h-4 w-4 mr-1 text-green-500" /> : <Copy className="h-4 w-4 mr-1" />}
+                    {copiedLink ? "Copied" : "Copy"}
+                  </Button>
+                </div>
+                <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                  ⚠️ Note: Replace <code>YOUR_PASSWORD</code> in the URL with {apiLinkUser.username}'s actual proxy password.
+                </p>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setApiLinkUser(null)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -24,6 +24,7 @@ func NewUserRepository(db *database.DB) *UserRepository {
 func (r *UserRepository) List(ctx context.Context) ([]models.ProxyUser, error) {
 	query := `
 		SELECT pu.id, pu.username, pu.enabled,
+		       COALESCE(pu.allow_working_proxies_export, false),
 		       pu.main_pool_id, pu.fallback_pool_ids, pu.max_retries,
 		       COALESCE(pu.requests_per_minute, 0),
 		       pu.created_at, pu.updated_at,
@@ -42,7 +43,7 @@ func (r *UserRepository) List(ctx context.Context) ([]models.ProxyUser, error) {
 	for rows.Next() {
 		var u models.ProxyUser
 		if err := rows.Scan(
-			&u.ID, &u.Username, &u.Enabled,
+			&u.ID, &u.Username, &u.Enabled, &u.AllowWorkingProxiesExport,
 			&u.MainPoolID, &u.FallbackPoolIDs, &u.MaxRetries,
 			&u.RequestsPerMinute,
 			&u.CreatedAt, &u.UpdatedAt, &u.MainPoolName,
@@ -63,6 +64,7 @@ func (r *UserRepository) List(ctx context.Context) ([]models.ProxyUser, error) {
 // GetByID returns a user by primary key (includes password_hash)
 func (r *UserRepository) GetByID(ctx context.Context, id int) (*models.ProxyUser, error) {
 	return r.scan(ctx, `SELECT id, username, password_hash, enabled,
+		COALESCE(allow_working_proxies_export, false),
 		main_pool_id, fallback_pool_ids, max_retries,
 		COALESCE(requests_per_minute, 0),
 		created_at, updated_at
@@ -72,6 +74,7 @@ func (r *UserRepository) GetByID(ctx context.Context, id int) (*models.ProxyUser
 // GetByUsername returns a user by username (includes password_hash — used for auth)
 func (r *UserRepository) GetByUsername(ctx context.Context, username string) (*models.ProxyUser, error) {
 	return r.scan(ctx, `SELECT id, username, password_hash, enabled,
+		COALESCE(allow_working_proxies_export, false),
 		main_pool_id, fallback_pool_ids, max_retries,
 		COALESCE(requests_per_minute, 0),
 		created_at, updated_at
@@ -81,7 +84,7 @@ func (r *UserRepository) GetByUsername(ctx context.Context, username string) (*m
 func (r *UserRepository) scan(ctx context.Context, query string, arg interface{}) (*models.ProxyUser, error) {
 	var u models.ProxyUser
 	err := r.db.Pool.QueryRow(ctx, query, arg).Scan(
-		&u.ID, &u.Username, &u.PasswordHash, &u.Enabled,
+		&u.ID, &u.Username, &u.PasswordHash, &u.Enabled, &u.AllowWorkingProxiesExport,
 		&u.MainPoolID, &u.FallbackPoolIDs, &u.MaxRetries,
 		&u.RequestsPerMinute,
 		&u.CreatedAt, &u.UpdatedAt,
@@ -116,12 +119,12 @@ func (r *UserRepository) Create(ctx context.Context, req models.CreateProxyUserR
 
 	var u models.ProxyUser
 	err = r.db.Pool.QueryRow(ctx, `
-		INSERT INTO proxy_users (username, password_hash, enabled, main_pool_id, fallback_pool_ids, max_retries, requests_per_minute)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id, username, enabled, main_pool_id, fallback_pool_ids, max_retries,
+		INSERT INTO proxy_users (username, password_hash, enabled, allow_working_proxies_export, main_pool_id, fallback_pool_ids, max_retries, requests_per_minute)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id, username, enabled, allow_working_proxies_export, main_pool_id, fallback_pool_ids, max_retries,
 		          COALESCE(requests_per_minute, 0), created_at, updated_at
-	`, req.Username, string(hash), req.Enabled, req.MainPoolID, fbIDs, maxRetries, req.RequestsPerMinute,
-	).Scan(&u.ID, &u.Username, &u.Enabled, &u.MainPoolID, &u.FallbackPoolIDs,
+	`, req.Username, string(hash), req.Enabled, req.AllowWorkingProxiesExport, req.MainPoolID, fbIDs, maxRetries, req.RequestsPerMinute,
+	).Scan(&u.ID, &u.Username, &u.Enabled, &u.AllowWorkingProxiesExport, &u.MainPoolID, &u.FallbackPoolIDs,
 		&u.MaxRetries, &u.RequestsPerMinute, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("create user: %w", err)
@@ -134,7 +137,45 @@ func (r *UserRepository) Create(ctx context.Context, req models.CreateProxyUserR
 
 // Update modifies an existing user
 func (r *UserRepository) Update(ctx context.Context, id int, req models.UpdateProxyUserRequest) (*models.ProxyUser, error) {
-	// Build optional password hash
+	current, err := r.GetByID(ctx, id)
+	if err != nil || current == nil {
+		return nil, fmt.Errorf("user not found: %w", err)
+	}
+
+	enabled := current.Enabled
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+
+	allowExport := current.AllowWorkingProxiesExport
+	if req.AllowWorkingProxiesExport != nil {
+		allowExport = *req.AllowWorkingProxiesExport
+	}
+
+	mainPoolID := current.MainPoolID
+	if req.MainPoolID != nil {
+		if *req.MainPoolID <= 0 {
+			mainPoolID = nil
+		} else {
+			mainPoolID = req.MainPoolID
+		}
+	}
+
+	fallbackPoolIDs := current.FallbackPoolIDs
+	if req.FallbackPoolIDs != nil {
+		fallbackPoolIDs = req.FallbackPoolIDs
+	}
+
+	maxRetries := current.MaxRetries
+	if req.MaxRetries > 0 {
+		maxRetries = req.MaxRetries
+	}
+
+	requestsPerMin := current.RequestsPerMinute
+	if req.RequestsPerMinute != nil {
+		requestsPerMin = *req.RequestsPerMinute
+	}
+
 	var hashPtr *string
 	if req.Password != "" {
 		h, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
@@ -145,26 +186,22 @@ func (r *UserRepository) Update(ctx context.Context, id int, req models.UpdatePr
 		hashPtr = &s
 	}
 
-	fbIDs := req.FallbackPoolIDs
-	if fbIDs == nil {
-		fbIDs = []int{}
-	}
-
 	var u models.ProxyUser
-	err := r.db.Pool.QueryRow(ctx, `
+	err = r.db.Pool.QueryRow(ctx, `
 		UPDATE proxy_users SET
-			password_hash      = CASE WHEN $1::TEXT IS NOT NULL THEN $1 ELSE password_hash END,
-			enabled            = COALESCE($2, enabled),
-			main_pool_id       = $3,
-			fallback_pool_ids  = $4,
-			max_retries        = CASE WHEN $5 > 0 THEN $5 ELSE max_retries END,
-			requests_per_minute= COALESCE($6, requests_per_minute),
-			updated_at         = NOW()
-		WHERE id = $7
-		RETURNING id, username, enabled, main_pool_id, fallback_pool_ids, max_retries,
+			password_hash                = CASE WHEN $1::TEXT IS NOT NULL THEN $1 ELSE password_hash END,
+			enabled                      = $2,
+			allow_working_proxies_export = $3,
+			main_pool_id                 = $4,
+			fallback_pool_ids            = $5,
+			max_retries                  = $6,
+			requests_per_minute          = $7,
+			updated_at                   = NOW()
+		WHERE id = $8
+		RETURNING id, username, enabled, allow_working_proxies_export, main_pool_id, fallback_pool_ids, max_retries,
 		          COALESCE(requests_per_minute, 0), created_at, updated_at
-	`, hashPtr, req.Enabled, req.MainPoolID, fbIDs, req.MaxRetries, req.RequestsPerMinute, id,
-	).Scan(&u.ID, &u.Username, &u.Enabled, &u.MainPoolID, &u.FallbackPoolIDs,
+	`, hashPtr, enabled, allowExport, mainPoolID, fallbackPoolIDs, maxRetries, requestsPerMin, id,
+	).Scan(&u.ID, &u.Username, &u.Enabled, &u.AllowWorkingProxiesExport, &u.MainPoolID, &u.FallbackPoolIDs,
 		&u.MaxRetries, &u.RequestsPerMinute, &u.CreatedAt, &u.UpdatedAt)
 
 	if err == pgx.ErrNoRows {

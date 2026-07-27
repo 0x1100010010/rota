@@ -508,6 +508,30 @@ var migrations = []Migration{
 			ALTER TABLE proxy_sources DROP COLUMN IF EXISTS last_total;
 		`,
 	},
+	{
+		Version:     22,
+		Description: "Add default geoip settings",
+		Up: `
+			INSERT INTO settings (key, value) VALUES
+			('geoip', '{"provider": "ip-api", "maxmind_license_key": "", "maxmind_db_path": "data/GeoLite2-City.mmdb", "maxmind_url": "https://raw.githubusercontent.com/P3TERX/GeoLite.mmdb/download/GeoLite2-City.mmdb", "auto_update": false, "update_interval_hours": 168}'::jsonb)
+			ON CONFLICT (key) DO NOTHING;
+		`,
+		Down: `
+			DELETE FROM settings WHERE key = 'geoip';
+		`,
+	},
+	{
+		Version:     23,
+		Description: "Add allow_working_proxies_export to proxy_users table",
+		Up: `
+			ALTER TABLE proxy_users
+				ADD COLUMN IF NOT EXISTS allow_working_proxies_export BOOLEAN NOT NULL DEFAULT false;
+		`,
+		Down: `
+			ALTER TABLE proxy_users
+				DROP COLUMN IF EXISTS allow_working_proxies_export;
+		`,
+	},
 }
 
 // Migrate runs all pending migrations

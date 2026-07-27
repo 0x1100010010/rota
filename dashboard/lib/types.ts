@@ -130,6 +130,15 @@ export interface Settings {
     compression_after_days: number
     cleanup_interval_hours: number
   }
+  geoip: {
+    provider: "ip-api" | "maxmind"
+    maxmind_license_key: string
+    maxmind_db_path: string
+    maxmind_url?: string
+    auto_update: boolean
+    update_interval_hours: number
+    last_updated_at?: string
+  }
 }
 
 export interface AuthResponse {
@@ -336,6 +345,7 @@ export interface ProxyUser {
   id: number
   username: string
   enabled: boolean
+  allow_working_proxies_export?: boolean
   main_pool_id?: number
   main_pool_name?: string
   fallback_pool_ids: number[]
@@ -349,6 +359,7 @@ export interface CreateProxyUserRequest {
   username: string
   password: string
   enabled: boolean
+  allow_working_proxies_export?: boolean
   main_pool_id?: number | null
   fallback_pool_ids: number[]
   max_retries: number
@@ -358,6 +369,7 @@ export interface CreateProxyUserRequest {
 export interface UpdateProxyUserRequest {
   password?: string
   enabled?: boolean
+  allow_working_proxies_export?: boolean
   main_pool_id?: number | null
   fallback_pool_ids?: number[]
   max_retries?: number

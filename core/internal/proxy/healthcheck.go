@@ -97,15 +97,17 @@ func (h *HealthChecker) CheckProxy(ctx context.Context, proxy *models.Proxy) (*m
 	if transport.TLSClientConfig == nil {
 		transport.TLSClientConfig = &tls.Config{}
 	}
+	// Go's defaults: minimum TLS 1.2, tracking future Go releases. The shared
+	// transport pins TLS 1.0 for legacy proxies, so reset it here.
+	transport.TLSClientConfig.MinVersion = 0
+	transport.TLSClientConfig.MaxVersion = 0
+	transport.TLSClientConfig.CipherSuites = nil
+
 	if settings.StrictTLS {
 		transport.TLSClientConfig.InsecureSkipVerify = false
 		transport.TLSClientConfig.VerifyPeerCertificate = nil
-		transport.TLSClientConfig.MinVersion = tls.VersionTLS12
 	} else {
 		transport.TLSClientConfig.InsecureSkipVerify = true
-		transport.TLSClientConfig.MinVersion = 0     // Go's default minimum TLS version
-		transport.TLSClientConfig.MaxVersion = 0     // Go's default maximum TLS version
-		transport.TLSClientConfig.CipherSuites = nil // Go's default cipher suites
 		// This callback allows us to accept even unparseable certificates
 		transport.TLSClientConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
 			// Always return nil to accept any certificate, even malformed ones

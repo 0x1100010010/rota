@@ -142,7 +142,11 @@ func TestHealthCheckStrictTLS(t *testing.T) {
 			}
 			if tc.wantErr != "" {
 				if result.Error == nil || !strings.Contains(*result.Error, tc.wantErr) {
-					t.Fatalf("error = %q, want it to contain %q", *result.Error, tc.wantErr)
+					errStr := "nil"
+					if result.Error != nil {
+						errStr = *result.Error
+					}
+					t.Fatalf("error = %q, want it to contain %q", errStr, tc.wantErr)
 				}
 			}
 		})

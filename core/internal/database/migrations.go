@@ -532,6 +532,20 @@ var migrations = []Migration{
 				DROP COLUMN IF EXISTS allow_working_proxies_export;
 		`,
 	},
+	{
+		Version:     24,
+		Description: "Add strict_tls setting to healthcheck (default false for backward compatibility)",
+		Up: `
+			UPDATE settings
+			SET value = jsonb_set(value, '{strict_tls}', 'false', true)
+			WHERE key = 'healthcheck';
+		`,
+		Down: `
+			UPDATE settings
+			SET value = value - 'strict_tls'
+			WHERE key = 'healthcheck';
+		`,
+	},
 }
 
 // Migrate runs all pending migrations

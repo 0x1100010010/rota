@@ -51,11 +51,12 @@ type RateLimitSettings struct {
 
 // HealthCheckSettings represents health check configuration
 type HealthCheckSettings struct {
-	Timeout int      `json:"timeout"`
-	Workers int      `json:"workers"`
-	URL     string   `json:"url"`
-	Status  int      `json:"status"`
-	Headers []string `json:"headers"`
+	Timeout   int      `json:"timeout"`
+	Workers   int      `json:"workers"`
+	URL       string   `json:"url"`
+	Status    int      `json:"status"`
+	Headers   []string `json:"headers"`
+	StrictTLS bool     `json:"strict_tls"` // Enable real TLS certificate validation during health checks
 }
 
 // LogRetentionSettings represents log retention and cleanup configuration

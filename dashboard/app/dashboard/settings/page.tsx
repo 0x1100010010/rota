@@ -740,6 +740,25 @@ export default function SettingsPage() {
                 One header per line in format: Key: Value
               </p>
             </div>
+
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label htmlFor="healthcheck-strict-tls">Strict TLS Validation</Label>
+                <p className="text-xs text-muted-foreground">
+                  Reject proxies with expired or invalid certificates
+                </p>
+              </div>
+              <Switch
+                id="healthcheck-strict-tls"
+                checked={settings.healthcheck.strict_tls ?? false}
+                onCheckedChange={(checked) =>
+                  setSettings({
+                    ...settings,
+                    healthcheck: { ...settings.healthcheck, strict_tls: checked },
+                  })
+                }
+              />
+            </div>
           </CardContent>
         </Card>
 

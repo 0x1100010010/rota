@@ -91,18 +91,28 @@ func (h *HealthChecker) CheckProxy(ctx context.Context, proxy *models.Proxy) (*m
 	// done so they don't linger ~90s each run (AUD-41).
 	defer transport.CloseIdleConnections()
 
-	// Override TLS config for health checks to be maximally permissive
+	// StrictTLS (default false) keeps the legacy permissive behavior; when
+	// enabled, real certificate validation catches proxies that intercept TLS
+	// with expired/invalid certs but would otherwise pass the health check.
 	if transport.TLSClientConfig == nil {
 		transport.TLSClientConfig = &tls.Config{}
 	}
-	transport.TLSClientConfig.InsecureSkipVerify = true
-	transport.TLSClientConfig.MinVersion = 0     // Allow all TLS versions including SSLv3
-	transport.TLSClientConfig.MaxVersion = 0     // No maximum version restriction
-	transport.TLSClientConfig.CipherSuites = nil // Accept all cipher suites
-	// This callback allows us to accept even unparseable certificates
-	transport.TLSClientConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
-		// Always return nil to accept any certificate, even malformed ones
-		return nil
+	// Go's defaults: minimum TLS 1.2, tracking future Go releases. The shared
+	// transport pins TLS 1.0 for legacy proxies, so reset it here.
+	transport.TLSClientConfig.MinVersion = 0
+	transport.TLSClientConfig.MaxVersion = 0
+	transport.TLSClientConfig.CipherSuites = nil
+
+	if settings.StrictTLS {
+		transport.TLSClientConfig.InsecureSkipVerify = false
+		transport.TLSClientConfig.VerifyPeerCertificate = nil
+	} else {
+		transport.TLSClientConfig.InsecureSkipVerify = true
+		// This callback allows us to accept even unparseable certificates
+		transport.TLSClientConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+			// Always return nil to accept any certificate, even malformed ones
+			return nil
+		}
 	}
 
 	client := &http.Client{
@@ -139,7 +149,11 @@ func (h *HealthChecker) CheckProxy(ctx context.Context, proxy *models.Proxy) (*m
 
 		// Make TLS errors more user-friendly
 		if strings.Contains(errMsg, "x509:") || strings.Contains(errMsg, "tls:") {
-			errMsg = fmt.Sprintf("TLS/SSL error: %s (Note: Certificate verification is disabled, but proxy may have issues)", err.Error())
+			if settings.StrictTLS {
+				errMsg = fmt.Sprintf("TLS/SSL error: %s", err.Error())
+			} else {
+				errMsg = fmt.Sprintf("TLS/SSL error: %s (Note: Certificate verification is disabled, but proxy may have issues)", err.Error())
+			}
 		} else if strings.Contains(errMsg, "timeout") {
 			errMsg = fmt.Sprintf("Connection timeout after %ds", settings.Timeout)
 		} else if strings.Contains(errMsg, "connection refused") {

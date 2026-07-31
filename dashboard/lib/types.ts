@@ -123,6 +123,7 @@ export interface Settings {
     url: string
     status: number
     headers: string[]
+    strict_tls: boolean
   }
   log_retention: {
     enabled: boolean

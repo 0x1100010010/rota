@@ -4,6 +4,7 @@ import {
   DashboardStats,
   ChartResponse,
   LogsResponse,
+  LogEntry,
   SystemMetrics,
   Settings,
   AuthResponse,
@@ -20,7 +21,6 @@ import {
   PoolProxy,
   GeoSummaryItem,
   GeoCityItem,
-  PoolHealthCheckResult,
   HCJob,
   CreatePoolRequest,
   ProxyUser,
@@ -593,7 +593,7 @@ class ApiClient {
   }
 
   createLogsWebSocket(
-    onMessage: (log: any) => void,
+    onMessage: (log: LogEntry) => void,
     levels?: string[],
     source?: string
   ): WebSocket {

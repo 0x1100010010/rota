@@ -3,13 +3,13 @@
 import { useEffect, useState, useCallback } from "react"
 import {
   Plus, Trash2, Pencil, Loader2, UserCheck, UserX,
-  ShieldCheck, Link2, ChevronDown, ChevronUp, Copy, Eye, EyeOff,
-  Download, ExternalLink, KeyRound, Check
+  ShieldCheck, Link2, Copy, Eye, EyeOff,
+  Download, Check
 } from "lucide-react"
 import { toast } from "sonner"
 import { api } from "@/lib/api"
 import { PROXY_PORT } from "@/lib/config"
-import { ProxyUser, ProxyPool, CreateProxyUserRequest } from "@/lib/types"
+import { ProxyUser, ProxyPool, CreateProxyUserRequest, UpdateProxyUserRequest } from "@/lib/types"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/table"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -110,7 +110,7 @@ export default function UsersPage() {
     setSaving(true)
     try {
       if (editUser) {
-        const upd: any = {
+        const upd: UpdateProxyUserRequest = {
           enabled: form.enabled,
           allow_working_proxies_export: form.allow_working_proxies_export,
           main_pool_id: form.main_pool_id,
@@ -127,8 +127,8 @@ export default function UsersPage() {
       }
       setDialogOpen(false)
       load()
-    } catch (e: any) {
-      toast.error(e.message || "Failed to save user")
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to save user")
     } finally {
       setSaving(false)
     }
@@ -588,7 +588,7 @@ export default function UsersPage() {
                     <SelectValue placeholder="Default (Main Pool)" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="default">Default (User's Main Pool: {apiLinkUser.main_pool_id ? poolName(apiLinkUser.main_pool_id) : "None"})</SelectItem>
+                    <SelectItem value="default">Default (User&apos;s Main Pool: {apiLinkUser.main_pool_id ? poolName(apiLinkUser.main_pool_id) : "None"})</SelectItem>
                     {pools.map(p => (
                       <SelectItem key={p.id} value={p.name}>
                         {p.name} (ID: {p.id} · {p.active_proxies} active)
@@ -597,7 +597,7 @@ export default function UsersPage() {
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  Specified via <code className="text-xs bg-muted px-1 rounded">?pool=name</code> or <code className="text-xs bg-muted px-1 rounded">?pool_id=id</code>. Omit to default to user's main pool.
+                  Specified via <code className="text-xs bg-muted px-1 rounded">?pool=name</code> or <code className="text-xs bg-muted px-1 rounded">?pool_id=id</code>. Omit to default to user&apos;s main pool.
                 </p>
               </div>
 
@@ -651,7 +651,7 @@ export default function UsersPage() {
                   </Button>
                 </div>
                 <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
-                  ⚠️ Note: Replace <code>YOUR_PASSWORD</code> in the URL with {apiLinkUser.username}'s actual proxy password.
+                  ⚠️ Note: Replace <code>YOUR_PASSWORD</code> in the URL with {apiLinkUser.username}&apos;s actual proxy password.
                 </p>
               </div>
             </div>

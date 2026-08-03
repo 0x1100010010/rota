@@ -53,7 +53,7 @@ export interface LogEntry {
   level: "info" | "warning" | "error" | "success"
   message: string
   details?: string
-  metadata?: Record<string, any>
+  metadata?: Record<string, unknown>
 }
 
 export interface LogsResponse {

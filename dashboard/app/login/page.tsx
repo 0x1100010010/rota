@@ -37,8 +37,8 @@ function LoginForm() {
     try {
       await api.login(username, password);
       router.push("/dashboard");
-    } catch (err: any) {
-      setError(err.message || "Invalid credentials. Please try again.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Invalid credentials. Please try again.");
       console.error("Login failed:", err);
     } finally {
       setIsLoading(false);

@@ -41,7 +41,7 @@ interface LogEntry {
   level: LogLevel
   message: string
   details?: string
-  metadata?: Record<string, any>
+  metadata?: Record<string, unknown>
 }
 
 function LogLevelIcon({ level }: { level: LogLevel }) {
@@ -99,7 +99,7 @@ export default function LogsPage() {
     }
 
     const activeLevels = Object.entries(levelFilters)
-      .filter(([_, enabled]) => enabled)
+      .filter(([, enabled]) => enabled)
       .map(([level]) => level)
 
     try {

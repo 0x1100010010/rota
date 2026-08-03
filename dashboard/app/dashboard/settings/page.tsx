@@ -63,8 +63,8 @@ export default function SettingsPage() {
       toast.success(res.message || "MaxMind GeoIP database updated successfully")
       const updated = await api.getSettings()
       setSettings(updated)
-    } catch (error: any) {
-      toast.error(error.message || "Failed to update MaxMind GeoIP DB")
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to update MaxMind GeoIP DB")
     } finally {
       setIsUpdatingGeoDB(false)
     }
@@ -98,7 +98,10 @@ export default function SettingsPage() {
 
     setChangingPass(true)
     try {
-      const opts: any = { current_password: currentPass, new_password: newPass }
+      const opts: { current_password: string; new_password: string; new_username?: string } = {
+        current_password: currentPass,
+        new_password: newPass,
+      }
       if (newUsername && newUsername !== adminUsername) {
         opts.new_username = newUsername
       }
@@ -109,8 +112,8 @@ export default function SettingsPage() {
       setNewPass("")
       setConfirmPass("")
       toast.success("Credentials updated successfully")
-    } catch (e: any) {
-      toast.error(e.message || "Failed to change password")
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to change password")
     } finally {
       setChangingPass(false)
     }
@@ -274,10 +277,10 @@ export default function SettingsPage() {
                   <Label htmlFor="rotation-method">Rotation Method</Label>
                   <Select
                     value={settings.rotation.method}
-                    onValueChange={(value: any) =>
+                    onValueChange={(value: string) =>
                       setSettings({
                         ...settings,
-                        rotation: { ...settings.rotation, method: value },
+                        rotation: { ...settings.rotation, method: value as Settings["rotation"]["method"] },
                       })
                     }
                   >

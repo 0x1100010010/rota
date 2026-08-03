@@ -27,6 +27,7 @@ import {
   XCircle,
   AlertCircle,
   Filter,
+  Tag,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -75,6 +76,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { api } from "@/lib/api"
 import { Proxy } from "@/lib/types"
 import { toast } from "@/lib/toast"
+import { TagInput } from "@/components/tag-input"
 
 export default function ProxiesPage() {
   const [data, setData] = React.useState<Proxy[]>([])
@@ -103,7 +105,17 @@ export default function ProxiesPage() {
     protocol: "http" as "http" | "https" | "socks4" | "socks4a" | "socks5",
     username: "",
     password: "",
+    tags: [] as string[],
   })
+
+  // Known tags across all proxies, used as one-click suggestions
+  const [allTags, setAllTags] = React.useState<string[]>([])
+
+  // Bulk tag dialog
+  const [isTagDialogOpen, setIsTagDialogOpen] = React.useState(false)
+  const [bulkAddTags, setBulkAddTags] = React.useState<string[]>([])
+  const [bulkRemoveTags, setBulkRemoveTags] = React.useState<string[]>([])
+  const [isTagging, setIsTagging] = React.useState(false)
 
   // Import modal states
   const [importFile, setImportFile] = React.useState<File | null>(null)
@@ -160,13 +172,26 @@ export default function ProxiesPage() {
     fetchProxies()
   }, [fetchProxies])
 
+  const fetchTagList = React.useCallback(async () => {
+    try {
+      setAllTags(await api.getTagList())
+    } catch {
+      // Suggestions are best-effort; tagging works without them
+    }
+  }, [])
+
+  React.useEffect(() => {
+    fetchTagList()
+  }, [fetchTagList])
+
   const handleAddProxy = async () => {
     try {
       await api.addProxy(newProxy)
       setIsAddDialogOpen(false)
-      setNewProxy({ address: "", protocol: "http", username: "", password: "" })
+      setNewProxy({ address: "", protocol: "http", username: "", password: "", tags: [] })
       toast.success("Proxy added successfully")
       fetchProxies()
+      fetchTagList()
     } catch (error) {
       console.error("Failed to add proxy:", error)
       toast.error("Failed to add proxy", error instanceof Error ? error.message : "Unknown error")
@@ -181,14 +206,45 @@ export default function ProxiesPage() {
         address: editingProxy.address,
         protocol: editingProxy.protocol,
         username: editingProxy.username,
+        tags: editingProxy.tags ?? [],
       })
       setIsEditDialogOpen(false)
       setEditingProxy(null)
       toast.success("Proxy updated successfully")
       fetchProxies()
+      fetchTagList()
     } catch (error) {
       console.error("Failed to update proxy:", error)
       toast.error("Failed to update proxy", error instanceof Error ? error.message : "Unknown error")
+    }
+  }
+
+  const handleBulkTag = async () => {
+    const selectedIds = getSelectedProxyIds()
+    if (selectedIds.length === 0) return
+    if (bulkAddTags.length === 0 && bulkRemoveTags.length === 0) {
+      toast.error("Nothing to do", "Add or remove at least one tag")
+      return
+    }
+
+    setIsTagging(true)
+    try {
+      const res = await api.bulkTagProxies({
+        ids: selectedIds,
+        add: bulkAddTags,
+        remove: bulkRemoveTags,
+      })
+      toast.success(`Tags updated on ${res.updated} proxies`)
+      setIsTagDialogOpen(false)
+      setBulkAddTags([])
+      setBulkRemoveTags([])
+      fetchProxies()
+      fetchTagList()
+    } catch (error) {
+      console.error("Failed to update tags:", error)
+      toast.error("Failed to update tags", error instanceof Error ? error.message : "Unknown error")
+    } finally {
+      setIsTagging(false)
     }
   }
 
@@ -480,6 +536,29 @@ export default function ProxiesPage() {
       ),
     },
     {
+      accessorKey: "tags",
+      header: "Tags",
+      enableSorting: false,
+      cell: ({ row }) => {
+        const tags = (row.getValue("tags") as string[] | undefined) ?? []
+        if (tags.length === 0) {
+          return <span className="text-muted-foreground">—</span>
+        }
+        return (
+          <div className="flex flex-wrap gap-1 max-w-[200px]">
+            {tags.slice(0, 3).map(tag => (
+              <Badge key={tag} variant="secondary" className="text-xs">{tag}</Badge>
+            ))}
+            {tags.length > 3 && (
+              <Badge variant="outline" className="text-xs" title={tags.slice(3).join(", ")}>
+                +{tags.length - 3}
+              </Badge>
+            )}
+          </div>
+        )
+      },
+    },
+    {
       accessorKey: "status",
       header: ({ column }) => {
         return (
@@ -691,6 +770,14 @@ export default function ProxiesPage() {
                   <DropdownMenuItem onClick={() => setIsImportDialogOpen(true)}>
                     <Upload className="mr-2 h-4 w-4" />
                     Import from TXT
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={() => setIsTagDialogOpen(true)}
+                    disabled={Object.keys(rowSelection).length === 0}
+                  >
+                    <Tag className="mr-2 h-4 w-4" />
+                    Edit tags of selected ({Object.keys(rowSelection).length})
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => handleExport("txt")}>
@@ -958,6 +1045,18 @@ export default function ProxiesPage() {
                 onChange={(e) => setNewProxy({ ...newProxy, password: e.target.value })}
               />
             </div>
+            <div className="grid gap-2">
+              <Label htmlFor="tags">Tags (optional)</Label>
+              <TagInput
+                id="tags"
+                value={newProxy.tags}
+                onChange={(tags) => setNewProxy({ ...newProxy, tags })}
+                suggestions={allTags}
+              />
+              <p className="text-xs text-muted-foreground">
+                Tags let pools match proxies without GeoIP data (e.g. local/VPN proxies)
+              </p>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>
@@ -1017,6 +1116,15 @@ export default function ProxiesPage() {
                   onChange={(e) => setEditingProxy({ ...editingProxy, username: e.target.value })}
                 />
               </div>
+              <div className="grid gap-2">
+                <Label htmlFor="edit-tags">Tags</Label>
+                <TagInput
+                  id="edit-tags"
+                  value={editingProxy.tags ?? []}
+                  onChange={(tags) => setEditingProxy({ ...editingProxy, tags })}
+                  suggestions={allTags}
+                />
+              </div>
             </div>
           )}
           <DialogFooter>
@@ -1025,6 +1133,55 @@ export default function ProxiesPage() {
             </Button>
             <Button onClick={handleEditProxy}>
               Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Tag Dialog */}
+      <Dialog open={isTagDialogOpen} onOpenChange={(open) => {
+        setIsTagDialogOpen(open)
+        if (!open) {
+          setBulkAddTags([])
+          setBulkRemoveTags([])
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit tags of {Object.keys(rowSelection).length} proxies</DialogTitle>
+            <DialogDescription>
+              Added tags are appended to each proxy&apos;s existing tags; removed tags are stripped.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="bulk-add-tags">Add tags</Label>
+              <TagInput
+                id="bulk-add-tags"
+                value={bulkAddTags}
+                onChange={setBulkAddTags}
+                suggestions={allTags}
+                disabled={isTagging}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="bulk-remove-tags">Remove tags</Label>
+              <TagInput
+                id="bulk-remove-tags"
+                value={bulkRemoveTags}
+                onChange={setBulkRemoveTags}
+                suggestions={allTags}
+                disabled={isTagging}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsTagDialogOpen(false)} disabled={isTagging}>
+              Cancel
+            </Button>
+            <Button onClick={handleBulkTag} disabled={isTagging}>
+              {isTagging && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Apply Tags
             </Button>
           </DialogFooter>
         </DialogContent>

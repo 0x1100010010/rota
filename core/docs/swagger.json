@@ -589,6 +589,53 @@
                 }
             }
         },
+        "/proxies/bulk-tags": {
+            "post": {
+                "description": "Add and/or remove tags on multiple proxies at once",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "proxies"
+                ],
+                "summary": "Bulk update proxy tags",
+                "parameters": [
+                    {
+                        "description": "Proxy IDs and tags to add/remove",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_alpkeskin_rota_core_internal_models.BulkTagProxyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Update results",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_alpkeskin_rota_core_internal_models.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_alpkeskin_rota_core_internal_models.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/proxies/export": {
             "get": {
                 "description": "Export proxy list in various formats (txt, json, csv)",
@@ -1289,6 +1336,33 @@
                     "minItems": 1,
                     "items": {
                         "type": "integer"
+                    }
+                }
+            }
+        },
+        "github_com_alpkeskin_rota_core_internal_models.BulkTagProxyRequest": {
+            "type": "object",
+            "required": [
+                "ids"
+            ],
+            "properties": {
+                "ids": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "add": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "remove": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
                     }
                 }
             }

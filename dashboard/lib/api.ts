@@ -11,6 +11,7 @@ import {
   UpdateProxyRequest,
   BulkProxyRequest,
   BulkDeleteRequest,
+  BulkTagRequest,
   ProxyTestResult,
   ProxySource,
   CreateSourceRequest,
@@ -213,6 +214,16 @@ class ApiClient {
     message: string
   }> {
     return this.request("/api/v1/proxies/bulk-delete", {
+      method: "POST",
+      body: JSON.stringify(request),
+    })
+  }
+
+  async bulkTagProxies(request: BulkTagRequest): Promise<{
+    updated: number
+    message: string
+  }> {
+    return this.request("/api/v1/proxies/bulk-tags", {
       method: "POST",
       body: JSON.stringify(request),
     })

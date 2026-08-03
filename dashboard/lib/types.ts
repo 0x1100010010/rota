@@ -10,6 +10,7 @@ export interface Proxy {
   avg_response_time: number
   last_check: string
   username?: string
+  tags: string[]
   created_at: string
   updated_at: string
 }
@@ -160,6 +161,7 @@ export interface AddProxyRequest {
   protocol: "http" | "https" | "socks4" | "socks4a" | "socks5"
   username?: string
   password?: string
+  tags?: string[]
 }
 
 export interface UpdateProxyRequest {
@@ -167,6 +169,13 @@ export interface UpdateProxyRequest {
   protocol?: "http" | "https" | "socks4" | "socks4a" | "socks5"
   username?: string
   password?: string
+  tags?: string[]
+}
+
+export interface BulkTagRequest {
+  ids: number[]
+  add?: string[]
+  remove?: string[]
 }
 
 export interface BulkProxyRequest {

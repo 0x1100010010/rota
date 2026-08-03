@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/alpkeskin/rota/core/internal/models"
@@ -316,6 +317,57 @@ func (h *ProxyHandler) BulkDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.jsonResponse(w, http.StatusOK, response)
+}
+
+// BulkTag handles bulk tag updates on proxies
+//	@Summary		Bulk update proxy tags
+//	@Description	Add and/or remove tags on multiple proxies at once
+//	@Tags			proxies
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		models.BulkTagProxyRequest	true	"Proxy IDs and tags to add/remove"
+//	@Success		200		{object}	map[string]interface{}		"Update results"
+//	@Failure		400		{object}	models.ErrorResponse
+//	@Failure		500		{object}	models.ErrorResponse
+//	@Router			/proxies/bulk-tags [post]
+func (h *ProxyHandler) BulkTag(w http.ResponseWriter, r *http.Request) {
+	var req models.BulkTagProxyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.errorResponse(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if len(req.IDs) == 0 {
+		h.errorResponse(w, http.StatusBadRequest, "At least one proxy ID is required")
+		return
+	}
+
+	normalize := func(tags []string) []string {
+		out := make([]string, 0, len(tags))
+		for _, t := range tags {
+			if t = strings.TrimSpace(t); t != "" {
+				out = append(out, t)
+			}
+		}
+		return out
+	}
+	add, remove := normalize(req.Add), normalize(req.Remove)
+	if len(add) == 0 && len(remove) == 0 {
+		h.errorResponse(w, http.StatusBadRequest, "At least one tag to add or remove is required")
+		return
+	}
+
+	updated, err := h.proxyRepo.BulkUpdateTags(r.Context(), req.IDs, add, remove)
+	if err != nil {
+		h.logger.Error("failed to bulk update proxy tags", "error", err)
+		h.errorResponse(w, http.StatusInternalServerError, "Failed to update proxy tags")
+		return
+	}
+
+	h.jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"updated": updated,
+		"message": fmt.Sprintf("Successfully updated tags on %d proxies", updated),
+	})
 }
 
 // Test handles proxy testing

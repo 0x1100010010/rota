@@ -100,6 +100,13 @@ type BulkDeleteProxyRequest struct {
 	IDs []int `json:"ids" validate:"required,min=1"`
 }
 
+// BulkTagProxyRequest represents a request to add/remove tags on multiple proxies
+type BulkTagProxyRequest struct {
+	IDs    []int    `json:"ids" validate:"required,min=1"`
+	Add    []string `json:"add,omitempty"`
+	Remove []string `json:"remove,omitempty"`
+}
+
 // ProxyTestResult represents the result of testing a proxy
 type ProxyTestResult struct {
 	ID           int        `json:"id"`

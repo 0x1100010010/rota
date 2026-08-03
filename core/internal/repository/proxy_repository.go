@@ -315,12 +315,14 @@ func (r *ProxyRepository) Update(ctx context.Context, id int, req models.UpdateP
 	if tags == nil {
 		tags = []string{}
 	}
+	// password: nil keeps the stored value (it is never sent back to clients,
+	// so an edit form can't round-trip it); "" clears it explicitly.
 	query := `
 		UPDATE proxies
 		SET address    = COALESCE(NULLIF($1, ''), address),
 		    protocol   = COALESCE(NULLIF($2, ''), protocol),
 		    username   = $3,
-		    password   = $4,
+		    password   = COALESCE($4, password),
 		    tags       = $5,
 		    updated_at = NOW()
 		WHERE id = $6
@@ -341,6 +343,32 @@ func (r *ProxyRepository) Update(ctx context.Context, id int, req models.UpdateP
 	}
 
 	return &p, nil
+}
+
+// BulkUpdateTags adds and/or removes tags on multiple proxies in one statement.
+// Added tags are deduplicated; removals win over additions of the same tag.
+func (r *ProxyRepository) BulkUpdateTags(ctx context.Context, ids []int, add, remove []string) (int, error) {
+	if add == nil {
+		add = []string{}
+	}
+	if remove == nil {
+		remove = []string{}
+	}
+	query := `
+		UPDATE proxies
+		SET tags = (
+			SELECT COALESCE(array_agg(DISTINCT t ORDER BY t), '{}')
+			FROM unnest(COALESCE(tags, '{}') || $2::text[]) AS t
+			WHERE t <> ALL($3::text[])
+		),
+		    updated_at = NOW()
+		WHERE id = ANY($1::int[])
+	`
+	result, err := r.db.Pool.Exec(ctx, query, ids, add, remove)
+	if err != nil {
+		return 0, fmt.Errorf("failed to bulk update tags: %w", err)
+	}
+	return int(result.RowsAffected()), nil
 }
 
 // Delete deletes a proxy by ID

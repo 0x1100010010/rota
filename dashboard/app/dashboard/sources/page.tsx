@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react"
 import {
   Plus, Trash2, RefreshCw, Globe, Clock, CheckCircle2,
-  XCircle, Pencil, Download, Loader2, AlertCircle,
+  Pencil, Download, Loader2, AlertCircle,
 } from "lucide-react"
 import { toast } from "sonner"
 import { api } from "@/lib/api"
@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/table"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 
 const PROTOCOLS = ["http", "https", "socks4", "socks4a", "socks5"] as const
 const DEFAULT_FORM: CreateSourceRequest = {
@@ -95,8 +95,8 @@ export default function SourcesPage() {
       }
       setDialogOpen(false)
       load()
-    } catch (e: any) {
-      toast.error(e.message || "Failed to save source")
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to save source")
     } finally {
       setSaving(false)
     }
@@ -119,8 +119,8 @@ export default function SourcesPage() {
       const res = await api.fetchSourceNow(id)
       toast.success(`Fetched ${res.imported} proxies from source`)
       load()
-    } catch (e: any) {
-      toast.error(e.message || "Fetch failed")
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Fetch failed")
     } finally {
       setFetchingId(null)
     }
@@ -381,7 +381,7 @@ export default function SourcesPage() {
               <Label>Protocol</Label>
               <Select
                 value={form.protocol}
-                onValueChange={v => setForm({ ...form, protocol: v as any })}
+                onValueChange={v => setForm({ ...form, protocol: v as CreateSourceRequest["protocol"] })}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -422,7 +422,7 @@ export default function SourcesPage() {
                 <Label htmlFor="src-cleanup">Auto-cleanup stale proxies</Label>
               </div>
               <p className="text-xs text-muted-foreground -mt-1">
-                Delete proxies that have been missing from this source's fetch for longer than the threshold below.
+                Delete proxies that have been missing from this source&apos;s fetch for longer than the threshold below.
                 Proxies still in the fetch response are never deleted.
               </p>
               {form.cleanup_enabled && (

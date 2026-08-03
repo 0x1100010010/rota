@@ -8,9 +8,6 @@ import {
   VisibilityState,
   flexRender,
   getCoreRowModel,
-  getFilteredRowModel,
-  getPaginationRowModel,
-  getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table"
 import {
@@ -52,7 +49,6 @@ import {
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Status, StatusIndicator, StatusLabel } from "@/components/ui/shadcn-io/status"
 import {
   Dialog,
   DialogContent,
@@ -325,7 +321,7 @@ export default function ProxiesPage() {
       setRowSelection({})
       toast.success(`${res.deleted} proxies deleted`)
       fetchProxies()
-    } catch (error) {
+    } catch {
       toast.error("Failed to delete all proxies")
     } finally {
       setDeleteAllConfirm(false)
@@ -573,11 +569,6 @@ export default function ProxiesPage() {
       },
       cell: ({ row }) => {
         const status = row.getValue("status") as string
-        const statusMap = {
-          active: "online" as const,
-          failed: "offline" as const,
-          idle: "idle" as const,
-        }
         const statusColors = {
           active: "text-green-600",
           failed: "text-red-600",
@@ -1014,7 +1005,7 @@ export default function ProxiesPage() {
               <Label htmlFor="protocol">Protocol</Label>
               <Select
                 value={newProxy.protocol}
-                onValueChange={(value: any) => setNewProxy({ ...newProxy, protocol: value })}
+                onValueChange={(value: string) => setNewProxy({ ...newProxy, protocol: value as typeof newProxy.protocol })}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -1094,7 +1085,7 @@ export default function ProxiesPage() {
                 <Label htmlFor="edit-protocol">Protocol</Label>
                 <Select
                   value={editingProxy.protocol}
-                  onValueChange={(value: any) => setEditingProxy({ ...editingProxy, protocol: value })}
+                  onValueChange={(value: string) => setEditingProxy({ ...editingProxy, protocol: value as Proxy["protocol"] })}
                 >
                   <SelectTrigger>
                     <SelectValue />
@@ -1281,7 +1272,7 @@ export default function ProxiesPage() {
                       <Label htmlFor="import-protocol">Protocol</Label>
                       <Select
                         value={importProtocol}
-                        onValueChange={(value: any) => setImportProtocol(value)}
+                        onValueChange={(value: string) => setImportProtocol(value as typeof importProtocol)}
                         disabled={isImporting}
                       >
                         <SelectTrigger>

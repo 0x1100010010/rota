@@ -3,17 +3,16 @@
 import { useState, useCallback } from "react"
 import {
   ChevronRight, ChevronDown, Plus, Loader2, Layers,
-  Globe, MapPin, CheckSquare, Square,
+  Globe, MapPin, CheckSquare,
 } from "lucide-react"
 import { toast } from "sonner"
 import { api } from "@/lib/api"
-import { GeoSummaryItem, GeoCityItem, GeoFilter, ProxyPool } from "@/lib/types"
+import { GeoSummaryItem, GeoCityItem, GeoFilter, ProxyPool, CreatePoolRequest } from "@/lib/types"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Progress } from "@/components/ui/progress"
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog"
@@ -136,7 +135,7 @@ export function GeoSelector({ countries, existingPools, onCreated }: Props) {
       await api.createPool({
         name: poolName,
         geo_filters: filters,
-        rotation_method: rotation as any,
+        rotation_method: rotation as CreatePoolRequest["rotation_method"],
         stick_count: stickCount,
         health_check_url: hcUrl,
         health_check_cron: hcCron,
@@ -148,8 +147,8 @@ export function GeoSelector({ countries, existingPools, onCreated }: Props) {
       setCreateOpen(false)
       setSelected(new Map())
       onCreated()
-    } catch (e: any) {
-      toast.error(e.message || "Failed to create pool")
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to create pool")
     } finally {
       setSaving(false)
     }
@@ -178,7 +177,7 @@ export function GeoSelector({ countries, existingPools, onCreated }: Props) {
           <Globe className="h-10 w-10 text-muted-foreground" />
           <p className="text-muted-foreground">No geo data yet.</p>
           <p className="text-xs text-muted-foreground">
-            Import proxies via Sources, then click "Enrich GeoIP".
+            Import proxies via Sources, then click &quot;Enrich GeoIP&quot;.
           </p>
         </CardContent>
       </Card>

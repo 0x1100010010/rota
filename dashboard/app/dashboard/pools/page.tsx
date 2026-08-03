@@ -193,8 +193,8 @@ export default function PoolsPage() {
       }
       setDialogOpen(false)
       loadAll()
-    } catch (e: any) {
-      toast.error(e.message || "Failed to save pool")
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to save pool")
     } finally {
       setSaving(false)
     }
@@ -992,7 +992,7 @@ export default function PoolsPage() {
                 <Label>Rotation strategy</Label>
                 <Select
                   value={form.rotation_method}
-                  onValueChange={v => setForm({ ...form, rotation_method: v as any })}
+                  onValueChange={v => setForm({ ...form, rotation_method: v as CreatePoolRequest["rotation_method"] })}
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>

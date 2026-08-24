@@ -31,7 +31,8 @@ services:
     ports:
       # The proxy itself is the product — keep it reachable on the host.
       # The REST API (8001) is internal only; reach it via Caddy at /api.
-      - "${PROXY_PORT:-8000}:8000"
+      # The container-side port must match PROXY_PORT (the core binds to it).
+      - "${PROXY_PORT:-8000}:${PROXY_PORT:-8000}"
     environment:
       - PROXY_PORT=${PROXY_PORT:-8000}
       - API_PORT=8001
